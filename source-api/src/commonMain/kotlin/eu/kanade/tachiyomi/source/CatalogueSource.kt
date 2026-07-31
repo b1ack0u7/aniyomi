@@ -2,6 +2,9 @@ package eu.kanade.tachiyomi.source
 
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import rx.Observable
 import tachiyomi.core.common.util.lang.awaitSingle
 
@@ -16,6 +19,16 @@ interface CatalogueSource : MangaSource {
      * Whether the source has support for latest updates.
      */
     val supportsLatest: Boolean
+
+    /**
+     * @since extensions-lib 1.6
+     */
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = defaultMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
 
     /**
      * Get a page with a list of manga.

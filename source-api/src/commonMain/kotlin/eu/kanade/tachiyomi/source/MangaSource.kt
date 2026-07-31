@@ -3,7 +3,10 @@ package eu.kanade.tachiyomi.source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.awaitSingle
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import rx.Observable
 
 /**
@@ -23,6 +26,29 @@ interface MangaSource {
 
     val lang: String
         get() = ""
+
+    /**
+     * Fetches updated information for a manga.
+     *
+     * Depending on the provided flags or source availability, this may include updated manga
+     * metadata, available chapters, or both. If a value is not requested, the existing provided
+     * value can be returned as-is.
+     *
+     * Sources targeting older versions of the library are served by the default implementation,
+     * which delegates to [getMangaDetails] and [getChapterList].
+     *
+     * @since extensions-lib 1.6
+     * @param manga the manga to fetch updates for.
+     * @param chapters existing chapters of the manga.
+     * @param fetchDetails whether to include updated manga details.
+     * @param fetchChapters whether to include available chapters.
+     */
+    suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = defaultMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
 
     /**
      * Get the updated details for a manga.
@@ -81,4 +107,22 @@ interface MangaSource {
     )
     fun fetchPageList(chapter: SChapter): Observable<List<Page>> =
         throw IllegalStateException("Not used")
+}
+
+/**
+ * Backing implementation of [MangaSource.getMangaUpdate], shared by the interfaces exposing it so
+ * that sources built against any version of the library resolve an implementation.
+ */
+internal suspend fun MangaSource.defaultMangaUpdate(
+    manga: SManga,
+    chapters: List<SChapter>,
+    fetchDetails: Boolean,
+    fetchChapters: Boolean,
+): SMangaUpdate = supervisorScope {
+    val deferredManga = if (fetchDetails) async { getMangaDetails(manga) } else null
+    val deferredChapters = if (fetchChapters) async { getChapterList(manga) } else null
+    SMangaUpdate(
+        manga = deferredManga?.await() ?: manga,
+        chapters = deferredChapters?.await() ?: chapters,
+    )
 }
