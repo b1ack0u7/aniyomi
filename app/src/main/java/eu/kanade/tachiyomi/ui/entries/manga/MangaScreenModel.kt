@@ -23,6 +23,7 @@ import eu.kanade.domain.entries.manga.model.toSManga
 import eu.kanade.domain.items.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.items.chapter.interactor.SetReadStatus
 import eu.kanade.domain.items.chapter.interactor.SyncChaptersWithSource
+import eu.kanade.domain.items.chapter.model.toSChapter
 import eu.kanade.domain.track.manga.interactor.AddMangaTracks
 import eu.kanade.domain.track.manga.interactor.RefreshMangaTracks
 import eu.kanade.domain.track.manga.interactor.TrackChapter
@@ -276,7 +277,12 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val networkManga = state.source.getMangaDetails(state.manga.toSManga())
+                val networkManga = state.source.getMangaUpdate(
+                    manga = state.manga.toSManga(),
+                    chapters = emptyList(),
+                    fetchDetails = true,
+                    fetchChapters = false,
+                ).manga
                 updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch)
             }
         } catch (e: Throwable) {
@@ -570,7 +576,12 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val chapters = state.source.getChapterList(state.manga.toSManga())
+                val chapters = state.source.getMangaUpdate(
+                    manga = state.manga.toSManga(),
+                    chapters = state.chapters.map { it.chapter.toSChapter() },
+                    fetchDetails = false,
+                    fetchChapters = true,
+                ).chapters
 
                 val newChapters = syncChaptersWithSource.await(
                     chapters,
