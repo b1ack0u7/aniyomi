@@ -32,6 +32,8 @@ class PlayerPreferences(
 
     fun showFailedHosters() = preferenceStore.getBoolean("pref_show_failed_hosters", false)
     fun showEmptyHosters() = preferenceStore.getBoolean("pref_show_empty_hosters", false)
+    fun autoSwitchOnStall() = preferenceStore.getBoolean("pref_auto_switch_on_stall", true)
+    fun stallTimeoutSeconds() = preferenceStore.getInt("pref_stall_timeout_seconds", 20)
 
     // Display
 

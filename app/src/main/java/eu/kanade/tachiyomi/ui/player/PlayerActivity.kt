@@ -80,6 +80,7 @@ import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils.Companion.getStringRes
+import eu.kanade.tachiyomi.ui.player.utils.PlaybackHealth
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
@@ -89,6 +90,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -120,6 +122,7 @@ class PlayerActivity : BaseActivity() {
     val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     private var mediaSession: MediaSession? = null
+    private val playbackHealth = PlaybackHealth()
     private val gesturePreferences: GesturePreferences by lazy { viewModel.gesturePreferences }
     private val playerPreferences: PlayerPreferences by lazy { viewModel.playerPreferences }
     private val audioPreferences: AudioPreferences = Injekt.get()
@@ -661,6 +664,10 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (property) {
             "time-pos" -> {
+                if (playbackHealth.onPosition(value)) {
+                    // Real progress: whatever server we are on is alive.
+                    viewModel.onPlaybackProgressed()
+                }
                 viewModel.updatePlayBackPos(value.toFloat())
                 viewModel.setChapter(value.toFloat())
             }
@@ -702,6 +709,13 @@ class PlayerActivity : BaseActivity() {
             }
 
             "paused-for-cache" -> {
+                playbackHealth.onBuffering(value)
+                if (value) {
+                    viewModel.startStallWatchdog()
+                } else {
+                    viewModel.cancelStallWatchdog()
+                    viewModel.onStallRecovered(playbackHealth.totalStalledMs())
+                }
                 viewModel.isLoading.update { value }
             }
 
@@ -752,7 +766,9 @@ class PlayerActivity : BaseActivity() {
                 viewModel.viewModelScope.launchIO { fileLoaded() }
             }
             MPVLib.mpvEventId.MPV_EVENT_SEEK -> viewModel.isLoading.update { true }
-            MPVLib.mpvEventId.MPV_EVENT_PLAYBACK_RESTART -> player.isExiting = false
+            MPVLib.mpvEventId.MPV_EVENT_PLAYBACK_RESTART -> {
+                player.isExiting = false
+            }
         }
     }
 
@@ -1083,6 +1099,13 @@ class PlayerActivity : BaseActivity() {
             "$option=\"$value\""
         }
 
+        playbackHealth.onLoadFile()
+
+        // Arm the countdown for the new file: a server that never opens the stream is just as
+        // stuck as one that stalls halfway, and both should fail over.
+        viewModel.cancelStallWatchdog()
+        viewModel.startStallWatchdog()
+
         if (torrentPreferences.torrServerEnable().get() &&
             (
                 video.videoUrl.startsWith(torrentServerApi.hostUrl) ||
@@ -1377,7 +1400,19 @@ class PlayerActivity : BaseActivity() {
     }
 
     private fun endFile(eofReached: Boolean) {
-        if (eofReached && playerPreferences.autoplayEnabled().get()) {
+        if (!eofReached) return
+
+        // A stream mpv failed to decode raises `eof-reached` just like a finished episode does.
+        // Telling them apart matters: treating a dead stream as "watched" used to leave the player
+        // stuck on an unplayable file, or skip to the next episode when autoplay was on.
+        if (!playbackHealth.hasPlayedContent()) {
+            if (playbackHealth.consumeFailure()) {
+                viewModel.onVideoPlaybackFailed()
+            }
+            return
+        }
+
+        if (playerPreferences.autoplayEnabled().get()) {
             viewModel.changeEpisode(previous = false, autoPlay = true)
         }
     }
