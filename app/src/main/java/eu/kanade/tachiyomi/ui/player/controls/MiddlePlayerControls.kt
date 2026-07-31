@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
@@ -32,7 +31,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
+import eu.kanade.tachiyomi.ui.player.controls.components.PlayerLoadingIndicator
 import `is`.xyz.mpv.Utils
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.components.material.padding
@@ -51,6 +52,9 @@ fun MiddlePlayerControls(
     controlsShown: Boolean,
     areControlsLocked: Boolean,
     showLoadingCircle: Boolean,
+    currentVideoLabel: String?,
+    stallInfo: PlayerViewModel.StallInfo?,
+    panelOpacity: Int,
     paused: Boolean,
     gestureSeekAmount: Pair<Int, Int>?,
     onPlayPauseClick: () -> Unit,
@@ -102,7 +106,11 @@ fun MiddlePlayerControls(
                 )
             }
 
-            (isLoading || isLoadingEpisode) && showLoadingCircle -> CircularProgressIndicator(Modifier.size(96.dp))
+            (isLoading || isLoadingEpisode) && showLoadingCircle -> PlayerLoadingIndicator(
+                currentVideoLabel = currentVideoLabel,
+                stallInfo = stallInfo,
+                panelOpacity = panelOpacity,
+            )
             else -> {
                 AnimatedVisibility(
                     visible = controlsShown && !areControlsLocked,
