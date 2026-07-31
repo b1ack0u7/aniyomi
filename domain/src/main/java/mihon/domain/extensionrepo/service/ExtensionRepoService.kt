@@ -19,13 +19,28 @@ class ExtensionRepoService(
     suspend fun fetchRepoDetails(
         repo: String,
     ): ExtensionRepo? {
+        return fetchRepoMeta(repo)?.toExtensionRepo(baseUrl = repo)
+    }
+
+    /**
+     * Returns the URL of the repo's index in the newer store format, or null when the repo only
+     * serves the legacy `index.min.json`.
+     */
+    suspend fun fetchIndexUrl(
+        repo: String,
+    ): String? {
+        return fetchRepoMeta(repo)?.indexV2
+    }
+
+    private suspend fun fetchRepoMeta(
+        repo: String,
+    ): ExtensionRepoMetaDto? {
         return withIOContext {
             try {
                 with(json) {
                     client.newCall(GET("$repo/repo.json"))
                         .awaitSuccess()
                         .parseAs<ExtensionRepoMetaDto>()
-                        .toExtensionRepo(baseUrl = repo)
                 }
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to fetch repo details" }
