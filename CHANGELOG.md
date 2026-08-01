@@ -11,6 +11,10 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+### Fixed
+
+- Fix bottom sheets and the cover/image viewers running past the bottom of the screen under the navigation bar, now that the system no longer lays dialog windows out inside the system bars ([@b1ack0u7](https://github.com/b1ack0u7))
+- Fix the keyboard covering the input in the player dialogs, including the sleep timer's time picker ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.20.0] - 2026-08-01
 ### Added
