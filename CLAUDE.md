@@ -120,3 +120,26 @@ In those cases just write the fix. Do not stall waiting on upstream, and do not 
 Spotless/ktlint (`intellij_idea` style) with 120-char lines, 4-space Kotlin indent, trailing commas allowed, and star imports disabled entirely. Composable function naming is exempt from ktlint's function-naming rule.
 
 Commit messages are Conventional-Commits-style with **no scope** and a capitalized subject: `feat: Add torrent streaming support`. Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `style`, `test`. `scripts/commits/commiter.py` builds a series of local commits from a JSON plan (see `scripts/local/commit-plan.json`) and enforces exactly that format; it never pushes.
+
+## Code comments — keep them scarce
+
+Comments in this repo have drifted into essays. **Default to no comment.** Names, types, and small functions should carry the meaning; a comment is the fallback for what the code genuinely can't say.
+
+**Only write a comment for non-obvious *why*:** a constraint that isn't visible locally, a gotcha that would look like a bug later, or a deliberate choice a reader would otherwise "fix". If the sentence starts by restating the code, delete it.
+
+**Hard limits:**
+
+- **1–2 lines.** Three only for something genuinely subtle. Never a multi-paragraph header above a file, a class, or a one-line function.
+- **Scale with the diff.** A small change earns at most one comment — usually zero. Don't annotate lines you touched only incidentally.
+- **One place, not every place.** State a design decision once at its source; don't repeat it on each caller. Mirrored anime/manga code is the one exception — each side is read on its own, so keep the note short on both rather than duplicating a long explanation.
+
+**Never:**
+
+- Narrate what the line does (`// Map of source id to source`, above `val sourcesMap = mutableMapOf<Long, Source>()`)
+- Narrate the change itself (`// now takes an Anime instead of an id`) — that's the commit message's job, not the code's
+- Explain Kotlin/Compose/coroutine basics, or add banner/section dividers
+- Comment tests — encode the intent in the test function name (`` fun `returns empty list when no categories exist`() ``) instead
+
+**Exception:** `:source-api` is public API that extension developers compile against — KDoc on its public types and members is expected and stays. Keep it factual and short; the rules above still apply everywhere else, including the rest of `:domain`, `:data`, and `:app`.
+
+**When editing existing code**, trim comments you pass through that already break these rules; don't preserve them out of politeness.
