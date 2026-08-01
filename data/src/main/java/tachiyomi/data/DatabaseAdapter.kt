@@ -4,6 +4,8 @@ import app.cash.sqldelight.ColumnAdapter
 import eu.kanade.tachiyomi.animesource.model.AnimeUpdateStrategy
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.util.Date
 
 object DateColumnAdapter : ColumnAdapter<Date, Long> {
@@ -22,6 +24,16 @@ object StringListColumnAdapter : ColumnAdapter<List<String>, String> {
     override fun encode(value: List<String>) = value.joinToString(
         separator = LIST_OF_STRINGS_SEPARATOR,
     )
+}
+
+/**
+ * Stores the source provided metadata of a manga or chapter as its JSON representation.
+ */
+object MemoColumnAdapter : ColumnAdapter<JsonObject, ByteArray> {
+    override fun decode(databaseValue: ByteArray): JsonObject =
+        Json.decodeFromString(databaseValue.decodeToString())
+
+    override fun encode(value: JsonObject): ByteArray = value.toString().encodeToByteArray()
 }
 
 object MangaUpdateStrategyColumnAdapter : ColumnAdapter<UpdateStrategy, Long> {

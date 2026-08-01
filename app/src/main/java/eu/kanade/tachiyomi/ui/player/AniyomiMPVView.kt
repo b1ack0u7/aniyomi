@@ -115,14 +115,19 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet) : BaseMPVView(c
         setVo(if (decoderPreferences.gpuNext().get()) "gpu-next" else "gpu")
         MPVLib.setPropertyBoolean("pause", true)
         MPVLib.setOptionString("profile", "fast")
-        MPVLib.setOptionString("hwdec", if (decoderPreferences.tryHWDecoding().get()) "auto" else "no")
+        val tryHWDecoding = decoderPreferences.tryHWDecoding().get()
+        MPVLib.setOptionString("hwdec", if (tryHWDecoding) "auto" else "no")
         when (decoderPreferences.videoDebanding().get()) {
             Debanding.None -> {}
             Debanding.CPU -> MPVLib.setOptionString("vf", "gradfun=radius=12")
             Debanding.GPU -> MPVLib.setOptionString("deband", "yes")
         }
 
-        if (decoderPreferences.useYUV420P().get()) {
+        // `format=yuv420p` needs frames in CPU memory, which mediacodec surfaces cannot provide:
+        // mpv logs "cannot copy surface of this format to CPU memory" and drops the filter. Where
+        // the copy does succeed it costs a GPU->CPU download per frame, so keep it to software
+        // decoding, where it is actually free.
+        if (decoderPreferences.useYUV420P().get() && !tryHWDecoding) {
             MPVLib.setOptionString("vf", "format=yuv420p")
         }
         MPVLib.setOptionString("msg-level", "all=" + if (networkPreferences.verboseLogging().get()) "v" else "warn")

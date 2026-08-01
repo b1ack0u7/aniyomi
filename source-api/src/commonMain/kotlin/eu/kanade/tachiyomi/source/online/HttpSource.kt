@@ -39,6 +39,16 @@ abstract class HttpSource : CatalogueSource {
     abstract val baseUrl: String
 
     /**
+     * Returns the base (home) URL of the website as a string.
+     *
+     * This is the address used when opening the source in WebView from the browse screen.
+     *
+     * @since extensions-lib 1.6
+     * @return the website's home page URL. Defaults to [baseUrl].
+     */
+    open fun getHomeUrl(): String = baseUrl
+
+    /**
      * Version id used to generate the source id. If the site completely changes and urls are
      * incompatible, you may increase this value and it'll be considered as a new source.
      */

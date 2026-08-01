@@ -70,6 +70,10 @@
     <string name="pref_hosters">Hosters</string>
     <string name="pref_hosters_show_failure">Display failed hosters</string>
     <string name="pref_hosters_show_empty">Display empty hosters</string>
+    <string name="pref_hosters_auto_switch">Switch server when stalled</string>
+    <string name="pref_hosters_auto_switch_info">If playback gets stuck without receiving data, automatically try the next server</string>
+    <string name="pref_hosters_stall_timeout">Wait before switching</string>
+    <string name="pref_hosters_stall_timeout_summary">%1$d seconds</string>
     <string name="pref_player_fullscreen">Show content in display cutout</string>
     <string name="pref_player_hide_controls">Hide player controls when opening the player</string>
     <string name="pref_show_system_bar">Show system status bar with controls</string>
@@ -242,6 +246,12 @@
     <!-- Player -->
 
     <!-- Player - skip intro button -->
+    <string name="player_loading_video">Loading %1$s</string>
+    <string name="player_loading_generic">Loading video</string>
+    <string name="player_stalled">Not receiving data from the server</string>
+    <string name="player_stalled_switching_in">Trying %1$s in %2$d s</string>
+    <string name="player_stalled_switching_now">Switching server…</string>
+    <string name="player_stalled_no_alternative">No other server available</string>
     <string name="player_skip_action">Skip %1$s</string>
     <string name="player_intro_skipped">%1$s skipped</string>
     <string name="player_chapter_type_opening">Opening</string>

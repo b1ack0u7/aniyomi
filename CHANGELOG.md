@@ -12,17 +12,36 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## [v0.20.0] - 2026-08-01
 ### Added
 
 - Added a description for the horizontal seek gesture setting ([@kenkoro](https://github.com/kenkoro)) ([#2224](https://github.com/aniyomiorg/aniyomi/pull/2224))
 - Added an http server for use in extensions ([@Secozzi](https://github.com/Secozzi)) ([#2348](https://github.com/aniyomiorg/aniyomi/pull/2348))
 - Added support for thumbnail preview when seeking ([@Secozzi](https://github.com/Secozzi)) ([#2343](https://github.com/aniyomiorg/aniyomi/pull/2343))
 - Add torrent streaming support ([@Secozzi](https://github.com/Secozzi)) ([#2346](https://github.com/aniyomiorg/aniyomi/pull/2346))
+- Automatically switch to the next server when playback stalls, with a configurable wait time in the player settings ([@b1ack0u7](https://github.com/b1ack0u7))
+- Show the current server and the countdown to the next one in the player loading overlay ([@b1ack0u7](https://github.com/b1ack0u7))
+- Support extension repositories in the index_v2 format, falling back to the legacy format ([@b1ack0u7](https://github.com/b1ack0u7))
+- Support extensions built against extensions-lib 1.6 ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Changed
+
+- The app now uses its own application ID, so it installs next to official Aniyomi instead of replacing it. The two do not share data — move over by exporting a backup from one and restoring it in the other ([@b1ack0u7](https://github.com/b1ack0u7))
+- Update checks now look at this fork's releases instead of upstream's ([@b1ack0u7](https://github.com/b1ack0u7))
+- Version numbers now use three components (major.minor.patch) instead of four ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Improved
+
+- Fetch manga details and chapters in a single request on sources that support it, so refreshing a title is faster and hits the source less ([@b1ack0u7](https://github.com/b1ack0u7))
+- Upgrade OkHttp and several native libraries towards 16 KB page size support on Android 15+; three libraries are still pending ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ### Fixed
 
 - Swapped keyEvent listeners for left and right keyboard arrow keys as they were swapped in the code causing the opposite of the desired behavior([@alphastark](https://github.com/alphastark)) ([#2219](https://github.com/aniyomiorg/aniyomi/pull/2219))
 - Fix some malformed translated strings that made the player quit when Aniskip was enabled ([@686udjie](https://github.com/686udjie)) ([#2217](https://github.com/aniyomiorg/aniyomi/pull/2217))
+- Apply the YUV420P option only when decoding in software, where it actually works; with hardware decoding it was dropped by the player after paying a copy for every frame ([@b1ack0u7](https://github.com/b1ack0u7))
+- Fix video quality order coming out wrong on sources that use the legacy video list, which was being sorted twice ([@b1ack0u7](https://github.com/b1ack0u7))
+- Stop the update check from offering an older release as an update, or failing outright when the installed version has more components than the release tag ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.18.1.2] - 2025-10-28
 ### Fixed

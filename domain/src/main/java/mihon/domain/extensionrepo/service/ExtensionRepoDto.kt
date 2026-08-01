@@ -1,11 +1,18 @@
 package mihon.domain.extensionrepo.service
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import mihon.domain.extensionrepo.model.ExtensionRepo
 
 @Serializable
 data class ExtensionRepoMetaDto(
     val meta: ExtensionRepoDto,
+    /**
+     * URL of the repo's index in the newer store format. Repos that only serve the legacy
+     * `index.min.json` don't declare it.
+     */
+    @SerialName("index_v2")
+    val indexV2: String? = null,
 )
 
 @Serializable

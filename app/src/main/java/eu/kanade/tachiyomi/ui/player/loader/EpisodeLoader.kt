@@ -89,8 +89,11 @@ class EpisodeLoader {
                 source.getHosterList(episode.toSEpisode())
                     .let { source.run { it.sortHosters() } }
             } else {
+                // Not sorted here on purpose: these videos go straight into the single synthetic
+                // hoster, and `getVideos` sorts every hoster's list on the way out. Sorting twice
+                // is wasted work, and with a comparator that isn't a strict total order the second
+                // pass can reorder the first one's result.
                 source.getVideoList(episode.toSEpisode())
-                    .let { source.run { it.sortVideos() } }
                     .toHosterList()
             }
         }

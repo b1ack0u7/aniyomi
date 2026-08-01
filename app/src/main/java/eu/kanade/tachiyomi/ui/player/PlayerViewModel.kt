@@ -142,6 +142,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
 
+/** How long the player may wait on data before the loading overlay starts warning about it. */
+private const val STALL_UI_GRACE_SECONDS = 5
+
 class PlayerViewModelProviderFactory(
     private val activity: PlayerActivity,
 ) : ViewModelProvider.Factory {
@@ -1267,6 +1270,7 @@ class PlayerViewModel @JvmOverloads constructor(
     ): Pair<InitResult, Result<Boolean>> {
         val defaultResult = InitResult(currentHosterList, qualityIndex, null)
         if (!needsInit(animeId, initialEpisodeId)) return Pair(defaultResult, Result.success(true))
+
         return try {
             val anime = getAnime.await(animeId)
             if (anime != null) {
@@ -1527,6 +1531,202 @@ class PlayerViewModel @JvmOverloads constructor(
 
         activity.setVideo(resolvedVideo)
         return true
+    }
+
+    /**
+     * What the loading overlay should say while playback is stuck.
+     *
+     * [nextVideoLabel] is null when there is nothing left to fall back to, in which case the
+     * countdown is informational only and no switch will happen.
+     */
+    @Immutable
+    data class StallInfo(
+        val secondsUntilSwitch: Int,
+        val nextVideoLabel: String?,
+    )
+
+    private val _stallInfo = MutableStateFlow<StallInfo?>(null)
+    val stallInfo = _stallInfo.asStateFlow()
+
+    private var stallWatchdogJob: Job? = null
+
+    /** Human-readable name of a video, used in the loading overlay. */
+    private fun videoLabel(hosterIndex: Int, video: Video): String {
+        val hosterName = _hosterList.value.getOrNull(hosterIndex)?.hosterName
+        return if (hosterName.isNullOrEmpty() || hosterName == Hoster.NO_HOSTER_LIST) {
+            video.videoTitle
+        } else {
+            "$hosterName · ${video.videoTitle}"
+        }
+    }
+
+    /** Label of the video currently handed to mpv, or null if there is none yet. */
+    val currentVideoLabel: String?
+        get() {
+            val (hosterIndex, videoIndex) = _selectedHosterVideoIndex.value
+            if (hosterIndex == -1 || videoIndex == -1) return null
+            val hoster = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready ?: return null
+            return hoster.videoList.getOrNull(videoIndex)?.let { videoLabel(hosterIndex, it) }
+        }
+
+    /**
+     * The candidate [onVideoPlaybackFailed] would switch to, without changing any state. Used to
+     * name the next server in the overlay before the switch actually happens.
+     */
+    private fun peekNextVideo(): Pair<Int, Int>? {
+        val (hosterIndex, videoIndex) = _selectedHosterVideoIndex.value
+        if (hosterIndex == -1 || videoIndex == -1) return null
+        val current = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready ?: return null
+        val currentVideo = current.videoList.getOrNull(videoIndex) ?: return null
+
+        // Same selection the failure path will run, on a copy where the current video is dead.
+        val simulated = _hosterState.value.toMutableList().apply {
+            this[hosterIndex] = current.getChangedAt(videoIndex, currentVideo, Video.State.ERROR)
+        }
+        val (nextHosterIdx, nextVideoIdx) = HosterLoader.selectBestVideo(simulated)
+        return if (nextHosterIdx == -1) null else nextHosterIdx to nextVideoIdx
+    }
+
+    /**
+     * Starts counting down to an automatic server switch.
+     *
+     * Called when playback is waiting on data — either mpv still opening the stream, or the cache
+     * running dry mid-playback. [cancelStallWatchdog] undoes it as soon as anything progresses, so
+     * a slow-but-working server never triggers a switch.
+     */
+    fun startStallWatchdog() {
+        if (!playerPreferences.autoSwitchOnStall().get()) return
+        val timeoutSeconds = playerPreferences.stallTimeoutSeconds().get()
+        if (timeoutSeconds <= 0) return
+        if (stallWatchdogJob?.isActive == true) return
+
+        stallWatchdogJob = viewModelScope.launchIO {
+            val next = peekNextVideo()
+            val nextLabel = next?.let { (hosterIdx, videoIdx) ->
+                val video = (_hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
+                videoLabel(hosterIdx, video)
+            }
+
+            // A healthy server still takes a few seconds to open a stream, so stay quiet at first:
+            // announcing a switch during every normal load would cry wolf.
+            val graceSeconds = (timeoutSeconds / 2).coerceAtMost(STALL_UI_GRACE_SECONDS)
+
+            for (remaining in timeoutSeconds downTo 1) {
+                // Standing down here is what keeps a deliberate pause from being read as a stall:
+                // a paused player is not waiting on data, so it never reaches the switch.
+                if (!isWaitingOnData()) {
+                    _stallInfo.update { _ -> null }
+                    return@launchIO
+                }
+                if (timeoutSeconds - remaining >= graceSeconds) {
+                    _stallInfo.update { _ -> StallInfo(remaining, nextLabel) }
+                }
+                delay(1.seconds)
+            }
+
+            // Detach before handing over: the switch runs setVideo, which cancels the watchdog,
+            // and we must not cancel the coroutine we are still running in.
+            stallWatchdogJob = null
+            _stallInfo.update { _ -> StallInfo(0, nextLabel) }
+
+            if (nextLabel == null) {
+                return@launchIO
+            }
+
+            onVideoPlaybackFailed()
+        }
+    }
+
+    /**
+     * Called when a buffering episode ends, with the total time this video has spent stalled.
+     *
+     * A server can be useless without ever hanging outright: one measured run stalled nine times
+     * in 76 seconds — none of them longer than the timeout, so the single-stall watchdog never
+     * fired — while playback crawled along at 40% of real time. Cumulative stalling catches the
+     * server that is merely too slow, which the continuous-stall check cannot see.
+     */
+    fun onStallRecovered(totalStalledMs: Long) {
+        if (!playerPreferences.autoSwitchOnStall().get()) return
+        val timeoutSeconds = playerPreferences.stallTimeoutSeconds().get()
+        if (timeoutSeconds <= 0) return
+        if (totalStalledMs < timeoutSeconds * 1000L) return
+
+        onVideoPlaybackFailed()
+    }
+
+    /**
+     * Whether the player is currently blocked on data — either still opening the stream or with a
+     * dry cache. This is the same condition that shows the loading overlay.
+     */
+    private fun isWaitingOnData(): Boolean = isLoading.value || _isLoadingEpisode.value
+
+    /** Stops the countdown and clears the overlay message. */
+    fun cancelStallWatchdog() {
+        if (stallWatchdogJob == null && _stallInfo.value == null) return
+        stallWatchdogJob?.cancel()
+        stallWatchdogJob = null
+        _stallInfo.update { _ -> null }
+    }
+
+    /**
+     * Called whenever mpv reports real playback progress, which proves the current server is
+     * alive and disarms the watchdog.
+     */
+    fun onPlaybackProgressed() {
+        cancelStallWatchdog()
+    }
+
+    /**
+     * Called when mpv gave up on the stream we handed it without ever playing anything.
+     *
+     * Resolution-time failures are already handled inside [loadVideo], but until now a video that
+     * resolved fine and then died inside mpv left the player stuck on a dead file. Mark it as
+     * failed and move on to the next best candidate, exactly like the resolution-time fallback.
+     */
+    fun onVideoPlaybackFailed() {
+        // Detach rather than cancel: this may be running inside the watchdog coroutine itself.
+        stallWatchdogJob = null
+
+        val (hosterIndex, videoIndex) = _selectedHosterVideoIndex.value
+        if (hosterIndex == -1 || videoIndex == -1) return
+
+        val selectedHosterState = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready ?: return
+        val failedVideo = selectedHosterState.videoList.getOrNull(videoIndex) ?: return
+
+        _hosterState.updateAt(
+            hosterIndex,
+            selectedHosterState.getChangedAt(videoIndex, failedVideo, Video.State.ERROR),
+        )
+        // Let loadVideo's own fallback chain kick in if the replacement fails too.
+        _currentVideo.update { _ -> null }
+
+        viewModelScope.launchIO {
+            val (nextHosterIdx, nextVideoIdx) = HosterLoader.selectBestVideo(_hosterState.value)
+            if (nextHosterIdx == -1) {
+                updateIsLoadingEpisode(false)
+                activity.showToast(activity.stringResource(AYMR.strings.no_available_videos))
+                return@launchIO
+            }
+
+            val nextVideo = (_hosterState.value[nextHosterIdx] as HosterState.Ready).videoList[nextVideoIdx]
+            // Keeps the overlay meaningful when the failure came from mpv rather than the watchdog.
+            _stallInfo.update { _ -> StallInfo(0, videoLabel(nextHosterIdx, nextVideo)) }
+
+            // loadVideo throws once its own fallback chain runs dry. Letting that escape the
+            // coroutine would reach the process-wide handler and tear the player down, so failing
+            // over has to end in a message rather than in a dead activity.
+            try {
+                loadVideo(currentSource.value, nextVideo, nextHosterIdx, nextVideoIdx)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateIsLoadingEpisode(false)
+                val message = (e as? ExceptionWithStringResource)
+                    ?.let { activity.stringResource(it.stringResource) }
+                    ?: activity.stringResource(AYMR.strings.no_available_videos)
+                activity.showToast(message)
+            }
+        }
     }
 
     fun onVideoClicked(hosterIndex: Int, videoIndex: Int) {

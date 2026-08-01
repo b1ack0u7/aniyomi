@@ -348,6 +348,14 @@ fun PlayerControls(
                     },
                 ) {
                     val showLoadingCircle by playerPreferences.showLoadingCircle().collectAsState()
+                    val panelOpacity by playerPreferences.panelOpacity().collectAsState()
+                    val stallInfo by viewModel.stallInfo.collectAsState()
+                    val selectedVideo by viewModel.selectedHosterVideoIndex.collectAsState()
+                    val hosterStates by viewModel.hosterState.collectAsState()
+                    // Recomputed on every selection change so the panel names the right server.
+                    val currentVideoLabel = remember(selectedVideo, hosterStates) {
+                        viewModel.currentVideoLabel
+                    }
                     MiddlePlayerControls(
                         hasPrevious = hasPreviousEpisode,
                         onSkipPrevious = { viewModel.changeEpisode(true) },
@@ -358,6 +366,9 @@ fun PlayerControls(
                         controlsShown = controlsShown,
                         areControlsLocked = areControlsLocked,
                         showLoadingCircle = showLoadingCircle,
+                        currentVideoLabel = currentVideoLabel,
+                        stallInfo = stallInfo,
+                        panelOpacity = panelOpacity,
                         paused = paused,
                         gestureSeekAmount = gestureSeekAmount,
                         onPlayPauseClick = viewModel::pauseUnpause,

@@ -24,6 +24,7 @@ import eu.kanade.domain.entries.manga.interactor.UpdateManga
 import eu.kanade.domain.entries.manga.model.hasCustomCover
 import eu.kanade.domain.entries.manga.model.toSManga
 import eu.kanade.domain.items.chapter.interactor.SyncChaptersWithSource
+import eu.kanade.domain.items.chapter.model.toSChapter
 import eu.kanade.tachiyomi.data.cache.MangaCoverCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.track.EnhancedMangaTracker
@@ -183,7 +184,12 @@ internal class MigrateMangaDialogScreenModel(
         mutableState.update { it.copy(isMigrating = true) }
 
         try {
-            val chapters = source.getChapterList(newManga.toSManga())
+            val chapters = source.getMangaUpdate(
+                manga = newManga.toSManga(),
+                chapters = getChaptersByMangaId.await(newManga.id).map { it.toSChapter() },
+                fetchDetails = false,
+                fetchChapters = true,
+            ).chapters
 
             migrateMangaInternal(
                 oldSource = prevSource,

@@ -123,6 +123,11 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
         val showFailure = playerPreferences.showFailedHosters()
         val showEmpty = playerPreferences.showEmptyHosters()
 
+        val autoSwitchOnStall = playerPreferences.autoSwitchOnStall()
+        val isAutoSwitchEnabled by autoSwitchOnStall.collectAsState()
+        val stallTimeoutPref = playerPreferences.stallTimeoutSeconds()
+        val stallTimeout by stallTimeoutPref.collectAsState()
+
         return Preference.PreferenceGroup(
             title = stringResource(AYMR.strings.pref_hosters),
             preferenceItems = persistentListOf(
@@ -133,6 +138,22 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = showEmpty,
                     title = stringResource(AYMR.strings.pref_hosters_show_empty),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = autoSwitchOnStall,
+                    title = stringResource(AYMR.strings.pref_hosters_auto_switch),
+                    subtitle = stringResource(AYMR.strings.pref_hosters_auto_switch_info),
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = stallTimeout,
+                    valueRange = 5..60,
+                    title = stringResource(AYMR.strings.pref_hosters_stall_timeout),
+                    subtitle = stringResource(AYMR.strings.pref_hosters_stall_timeout_summary, stallTimeout),
+                    enabled = isAutoSwitchEnabled,
+                    onValueChanged = {
+                        stallTimeoutPref.set(it)
+                        true
+                    },
                 ),
             ),
         )
