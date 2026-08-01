@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.Dialog
@@ -74,15 +76,22 @@ fun AdaptiveSheet(
 ) {
     val isTabletUi = isTabletUi()
 
+    // Read from the composition hosting the activity window: a dialog window doesn't get the system
+    // bar insets dispatched to its own composition, so they'd all resolve to zero inside it.
+    val windowInsets = WindowInsets.systemBars
+
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = dialogProperties,
     ) {
+        EdgeToEdgeDialogWindow()
+
         AdaptiveSheetImpl(
             modifier = modifier,
             isTabletUi = isTabletUi,
             enableSwipeDismiss = enableSwipeDismiss,
             onDismissRequest = onDismissRequest,
+            windowInsets = windowInsets,
         ) {
             content()
         }
@@ -91,5 +100,8 @@ fun AdaptiveSheet(
 
 private val dialogProperties = DialogProperties(
     usePlatformDefaultWidth = false,
-    decorFitsSystemWindows = true,
+    // Must be false so the window doesn't try to fit the system windows itself: the sheet insets its
+    // own content instead. Since targetSdk 35 the platform ignores decorFitsSystemWindows = true
+    // anyway.
+    decorFitsSystemWindows = false,
 )
