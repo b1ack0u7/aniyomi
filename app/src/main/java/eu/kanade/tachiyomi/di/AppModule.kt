@@ -27,6 +27,9 @@ import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadProvider
 import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
+import eu.kanade.tachiyomi.data.suggestions.anime.AnimeSearchFallbackEngine
+import eu.kanade.tachiyomi.data.suggestions.manga.MangaSearchFallbackEngine
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.extension.anime.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.manga.MangaExtensionManager
@@ -237,6 +240,10 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory { TorrentServerApi(get(), get()) }
         addSingletonFactory { TorrentServerUtils(get(), get()) }
+
+        addSingletonFactory { SuggestionCoordinator() }
+        addSingletonFactory { AnimeSearchFallbackEngine() }
+        addSingletonFactory { MangaSearchFallbackEngine() }
 
         // Asynchronously init expensive components for a faster cold start
         ContextCompat.getMainExecutor(app).execute {
