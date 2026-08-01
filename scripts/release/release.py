@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 GRADLE_FILE = REPO_ROOT / 'app' / 'build.gradle.kts'
 CHANGELOG_FILE = REPO_ROOT / 'CHANGELOG.md'
 
@@ -135,7 +135,7 @@ def roll_changelog(tag: str, release_date: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog='scripts/release.py',
+        prog='scripts/release/release.py',
         description='Bump the version, roll the changelog, commit and tag a release.',
     )
     parser.add_argument('version', help='new versionName, e.g. 1.0.0')

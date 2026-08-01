@@ -77,7 +77,7 @@ Two places name the repository and must point at this fork, not upstream:
 ## Cutting a release
 
 Work lands on `dev` and reaches `main` through a pull request; the tag is created on
-`main` afterwards, on the merge commit. `scripts/release.py` does the repeatable part:
+`main` afterwards, on the merge commit. `scripts/release/release.py` does the repeatable part:
 bumps the version, rolls the changelog, runs the CI gates locally, then commits — and
 tags too, unless `--no-tag` is passed.
 
@@ -85,10 +85,10 @@ tags too, unless `--no-tag` is passed.
 # On dev, with the release notes already written under "## Unreleased" in CHANGELOG.md.
 
 # 1. See what would change without touching anything.
-scripts/release.py 1.1.0 --no-tag --dry-run
+scripts/release/release.py 1.1.0 --no-tag --dry-run
 
 # 2. Commit the bump and push dev (drop --push to review the commit first).
-scripts/release.py 1.1.0 --no-tag --push
+scripts/release/release.py 1.1.0 --no-tag --push
 
 # 3. Open the pull request into main and wait for "PR build check" to pass.
 gh pr create --base main --head dev --title "chore: Release v1.1.0" --body "See CHANGELOG.md"
