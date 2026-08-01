@@ -58,16 +58,23 @@ class GetApplicationRelease(
             // tagged as something like "r1234"
             newVersion.toInt() > commitCount
         } else {
-            // Release builds: based on releases in "tachiyomiorg/tachiyomi" repo
-            // tagged as something like "v0.1.2"
+            // Release builds: based on releases in the app repository, tagged as
+            // something like "v0.1.2".
+            //
+            // Compared component by component, first difference wins, and the shorter
+            // side is padded with zeros. That keeps the ordering correct (an older tag
+            // with a larger patch number is not an update) and makes a change in the
+            // number of components safe rather than an index out of bounds.
             val oldVersion = versionName.replace("[^\\d.]".toRegex(), "")
 
-            val newSemVer = newVersion.split(".").map { it.toInt() }
-            val oldSemVer = oldVersion.split(".").map { it.toInt() }
+            val newSemVer = newVersion.split(".").mapNotNull { it.toIntOrNull() }
+            val oldSemVer = oldVersion.split(".").mapNotNull { it.toIntOrNull() }
 
-            oldSemVer.mapIndexed { index, i ->
-                if (newSemVer[index] > i) {
-                    return true
+            for (index in 0 until maxOf(newSemVer.size, oldSemVer.size)) {
+                val new = newSemVer.getOrElse(index) { 0 }
+                val old = oldSemVer.getOrElse(index) { 0 }
+                if (new != old) {
+                    return new > old
                 }
             }
 

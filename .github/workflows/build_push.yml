@@ -6,7 +6,7 @@ permissions:
 on:
   push:
     branches:
-      - '*'
+      - dev
     tags:
       - v*
 
@@ -35,19 +35,24 @@ jobs:
       - name: Check code format
         run: ./gradlew spotlessCheck
 
+      # Only tags need the packaged APKs, and R8 makes this the slowest step by far.
+      # Branch pushes stop at the format and test gates, which is where the signal is.
       - name: Build app
+        if: startsWith(github.ref, 'refs/tags/')
         run: ./gradlew assembleRelease -Penable-updater
 
       - name: Run unit tests
         run: ./gradlew testReleaseUnitTest
 
       - name: Upload APK
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: arm64-v8a-${{ github.sha }}
           path: app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
 
       - name: Upload mapping
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mapping-${{ github.sha }}
@@ -57,13 +62,13 @@ jobs:
 
       - name: Get tag name
 
-        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'aniyomiorg/aniyomi'
+        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'b1ack0u7/aniyomi'
         run: |
           set -x
           echo "VERSION_TAG=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
 
       - name: Sign APK
-        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'aniyomiorg/aniyomi'
+        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'b1ack0u7/aniyomi'
         uses: r0adkll/sign-android-release@f30bdd30588842ac76044ecdbd4b6d0e3e813478
         with:
           releaseDirectory: app/build/outputs/apk/release
@@ -75,7 +80,7 @@ jobs:
           BUILD_TOOLS_VERSION: '35.0.1'
 
       - name: Clean up build artifacts
-        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'aniyomiorg/aniyomi'
+        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'b1ack0u7/aniyomi'
         run: |
           set -e
 
@@ -99,24 +104,45 @@ jobs:
           sha=`sha256sum aniyomi-x86_64-${{ env.VERSION_TAG }}.apk | awk '{ print $1 }'`
           echo "APK_X86_64_SHA=$sha" >> $GITHUB_ENV
 
+      # Pulls the section for this tag out of CHANGELOG.md so the draft release
+      # already carries the release notes; the checksum table is appended to it.
+      - name: Build release notes
+        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'b1ack0u7/aniyomi'
+        run: |
+          set -e
+
+          awk -v tag="${{ env.VERSION_TAG }}" '
+            $0 ~ "^## \\[" tag "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ ! -s release_notes.md ]; then
+            echo "::warning::No CHANGELOG.md section found for ${{ env.VERSION_TAG }}"
+          fi
+
+          cat >> release_notes.md <<EOF
+
+          ---
+
+          ### Checksums
+
+          | Variant | SHA-256 |
+          | ------- | ------- |
+          | Universal | ${{ env.APK_UNIVERSAL_SHA }} |
+          | arm64-v8a | ${{ env.APK_ARM64_V8A_SHA }} |
+          | armeabi-v7a | ${{ env.APK_ARMEABI_V7A_SHA }} |
+          | x86 | ${{ env.APK_X86_SHA }} |
+          | x86_64 | ${{ env.APK_X86_64_SHA }} |
+          EOF
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'aniyomiorg/aniyomi'
+        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'b1ack0u7/aniyomi'
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: ${{ env.VERSION_TAG }}
           name: Aniyomi ${{ env.VERSION_TAG }}
-          body: |
-            ---
-
-            ### Checksums
-
-            | Variant | SHA-256 |
-            | ------- | ------- |
-            | Universal | ${{ env.APK_UNIVERSAL_SHA }}
-            | arm64-v8a | ${{ env.APK_ARM64_V8A_SHA }}
-            | armeabi-v7a | ${{ env.APK_ARMEABI_V7A_SHA }}
-            | x86 | ${{ env.APK_X86_SHA }}
-            | x86_64 | ${{ env.APK_X86_64_SHA }} |
+          body_path: release_notes.md
           files: |
             aniyomi-${{ env.VERSION_TAG }}.apk
             aniyomi-arm64-v8a-${{ env.VERSION_TAG }}.apk

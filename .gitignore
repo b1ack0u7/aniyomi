@@ -16,3 +16,4 @@ local.properties
 .DS_Store
 
 scripts/local
+docs/local
