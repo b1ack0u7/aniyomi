@@ -35,11 +35,14 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +64,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.entries.anime.model.episodesFiltered
 import eu.kanade.domain.entries.anime.model.seasonsFiltered
+import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.relativeDateTimeText
 import eu.kanade.presentation.entries.DownloadAction
 import eu.kanade.presentation.entries.EntryScreenItem
@@ -71,15 +75,20 @@ import eu.kanade.presentation.entries.anime.components.AnimeSeasonListItem
 import eu.kanade.presentation.entries.anime.components.EpisodeDownloadAction
 import eu.kanade.presentation.entries.anime.components.ExpandableAnimeDescription
 import eu.kanade.presentation.entries.anime.components.NextEpisodeAiringListItem
+import eu.kanade.presentation.entries.components.COLLAPSED_ITEM_COUNT
 import eu.kanade.presentation.entries.components.EntryBottomActionMenu
 import eu.kanade.presentation.entries.components.EntryToolbar
 import eu.kanade.presentation.entries.components.ItemHeader
 import eu.kanade.presentation.entries.components.MissingItemCountListItem
+import eu.kanade.presentation.entries.components.ShowAllItemsButton
+import eu.kanade.presentation.entries.components.SimilarTitlesRow
+import eu.kanade.presentation.entries.components.collapsedTo
 import eu.kanade.presentation.util.formatEpisodeNumber
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.source.anime.getNameForAnimeInfo
 import eu.kanade.tachiyomi.ui.browse.anime.extension.details.AnimeSourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreenModel
@@ -99,9 +108,12 @@ import tachiyomi.presentation.core.components.TwoPanelBox
 import tachiyomi.presentation.core.components.material.ExtendedFloatingActionButton
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import tachiyomi.source.local.entries.anime.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -125,6 +137,12 @@ fun AnimeScreen(
 
     // For tags menu
     onTagSearch: (String) -> Unit,
+
+    // For similar titles
+    onRequestSuggestions: () -> Unit,
+    onSuggestionClick: (SuggestionItem) -> Unit,
+    onSuggestionsSeeAll: () -> Unit,
+    onRetrySuggestions: () -> Unit,
 
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
@@ -191,6 +209,10 @@ fun AnimeScreen(
             onTrackingClicked = onTrackingClicked,
             onTagSearch = onTagSearch,
             onCopyTagToClipboard = onCopyTagToClipboard,
+            onRequestSuggestions = onRequestSuggestions,
+            onSuggestionClick = onSuggestionClick,
+            onSuggestionsSeeAll = onSuggestionsSeeAll,
+            onRetrySuggestions = onRetrySuggestions,
             onFilterClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
             onContinueWatching = onContinueWatching,
@@ -233,6 +255,10 @@ fun AnimeScreen(
             onTrackingClicked = onTrackingClicked,
             onTagSearch = onTagSearch,
             onCopyTagToClipboard = onCopyTagToClipboard,
+            onRequestSuggestions = onRequestSuggestions,
+            onSuggestionClick = onSuggestionClick,
+            onSuggestionsSeeAll = onSuggestionsSeeAll,
+            onRetrySuggestions = onRetrySuggestions,
             onFilterButtonClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
             onContinueWatching = onContinueWatching,
@@ -281,6 +307,12 @@ private fun AnimeScreenSmallImpl(
     // For tags menu
     onTagSearch: (String) -> Unit,
     onCopyTagToClipboard: (tag: String) -> Unit,
+
+    // For similar titles
+    onRequestSuggestions: () -> Unit,
+    onSuggestionClick: (SuggestionItem) -> Unit,
+    onSuggestionsSeeAll: () -> Unit,
+    onRetrySuggestions: () -> Unit,
 
     onFilterClicked: () -> Unit,
     onRefresh: () -> Unit,
@@ -339,6 +371,27 @@ private fun AnimeScreenSmallImpl(
     val isAnySelected by remember {
         derivedStateOf {
             episodes.fastAny { it.selected }
+        }
+    }
+
+    val fullListPreference = remember { Injekt.get<UiPreferences>().alwaysShowFullEpisodeList() }
+    val alwaysShowFullList by fullListPreference.changes()
+        .collectAsState(initial = fullListPreference.get())
+    var listExpanded by rememberSaveable(alwaysShowFullList) { mutableStateOf(alwaysShowFullList) }
+    // Entering selection mode opens the list: range/select-all reach episodes the collapsed
+    // list is hiding. Not reusing `isAnySelected` — its keyless `remember` holds on to the
+    // episode list from the first composition.
+    val hasSelection = episodes.fastAny { it.selected }
+    LaunchedEffect(hasSelection) { if (hasSelection) listExpanded = true }
+    // Seasons are their own short grid; only the episode list is worth collapsing.
+    val isCollapsible = !alwaysShowFullList &&
+        state.anime.fetchType == FetchType.Episodes &&
+        episodes.size > COLLAPSED_ITEM_COUNT
+    val visibleListItems = remember(listItem, listExpanded, isCollapsible) {
+        if (isCollapsible && !listExpanded) {
+            listItem.collapsedTo(COLLAPSED_ITEM_COUNT) { it is EpisodeList.Item }
+        } else {
+            listItem
         }
     }
 
@@ -516,6 +569,21 @@ private fun AnimeScreenSmallImpl(
                     }
 
                     item(
+                        key = EntryScreenItem.SUGGESTIONS,
+                        contentType = EntryScreenItem.SUGGESTIONS,
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        SimilarTitlesRow(
+                            state = state.suggestions,
+                            onRequestLoad = onRequestSuggestions,
+                            onItemClick = onSuggestionClick,
+                            onSeeAllClick = onSuggestionsSeeAll,
+                            onRetryClick = onRetrySuggestions,
+                            modifier = Modifier.ignorePadding(offsetGridPaddingPx),
+                        )
+                    }
+
+                    item(
                         key = EntryScreenItem.ITEM_HEADER,
                         contentType = EntryScreenItem.ITEM_HEADER,
                         span = { GridItemSpan(maxLineSpan) },
@@ -585,7 +653,7 @@ private fun AnimeScreenSmallImpl(
 
                             sharedEpisodeItems(
                                 anime = state.anime,
-                                episodes = listItem,
+                                episodes = visibleListItems,
                                 isAnyEpisodeSelected = episodes.fastAny { it.selected },
                                 showSummaries = state.showSummaries,
                                 showPreviews = state.showPreviews,
@@ -597,6 +665,21 @@ private fun AnimeScreenSmallImpl(
                                 onEpisodeSwipe = onEpisodeSwipe,
                                 itemModifier = Modifier.ignorePadding(offsetGridPaddingPx),
                             )
+
+                            if (isCollapsible) {
+                                item(
+                                    key = EntryScreenItem.SHOW_ALL_ITEMS,
+                                    contentType = EntryScreenItem.SHOW_ALL_ITEMS,
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    ShowAllItemsButton(
+                                        expanded = listExpanded,
+                                        totalCount = episodes.size,
+                                        isManga = false,
+                                        onClick = { listExpanded = !listExpanded },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -626,6 +709,12 @@ fun AnimeScreenLargeImpl(
     // For tags menu
     onTagSearch: (String) -> Unit,
     onCopyTagToClipboard: (tag: String) -> Unit,
+
+    // For similar titles
+    onRequestSuggestions: () -> Unit,
+    onSuggestionClick: (SuggestionItem) -> Unit,
+    onSuggestionsSeeAll: () -> Unit,
+    onRetrySuggestions: () -> Unit,
 
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
@@ -673,6 +762,27 @@ fun AnimeScreenLargeImpl(
     val isAnySelected by remember {
         derivedStateOf {
             episodes.fastAny { it.selected }
+        }
+    }
+
+    val fullListPreference = remember { Injekt.get<UiPreferences>().alwaysShowFullEpisodeList() }
+    val alwaysShowFullList by fullListPreference.changes()
+        .collectAsState(initial = fullListPreference.get())
+    var listExpanded by rememberSaveable(alwaysShowFullList) { mutableStateOf(alwaysShowFullList) }
+    // Entering selection mode opens the list: range/select-all reach episodes the collapsed
+    // list is hiding. Not reusing `isAnySelected` — its keyless `remember` holds on to the
+    // episode list from the first composition.
+    val hasSelection = episodes.fastAny { it.selected }
+    LaunchedEffect(hasSelection) { if (hasSelection) listExpanded = true }
+    // Seasons are their own short grid; only the episode list is worth collapsing.
+    val isCollapsible = !alwaysShowFullList &&
+        state.anime.fetchType == FetchType.Episodes &&
+        episodes.size > COLLAPSED_ITEM_COUNT
+    val visibleListItems = remember(listItem, listExpanded, isCollapsible) {
+        if (isCollapsible && !listExpanded) {
+            listItem.collapsedTo(COLLAPSED_ITEM_COUNT) { it is EpisodeList.Item }
+        } else {
+            listItem
         }
     }
 
@@ -826,6 +936,13 @@ fun AnimeScreenLargeImpl(
                                 onTagSearch = onTagSearch,
                                 onCopyTagToClipboard = onCopyTagToClipboard,
                             )
+                            SimilarTitlesRow(
+                                state = state.suggestions,
+                                onRequestLoad = onRequestSuggestions,
+                                onItemClick = onSuggestionClick,
+                                onSeeAllClick = onSuggestionsSeeAll,
+                                onRetryClick = onRetrySuggestions,
+                            )
                         }
                     },
                     endContent = {
@@ -909,7 +1026,7 @@ fun AnimeScreenLargeImpl(
 
                                     sharedEpisodeItems(
                                         anime = state.anime,
-                                        episodes = listItem,
+                                        episodes = visibleListItems,
                                         isAnyEpisodeSelected = episodes.fastAny { it.selected },
                                         showSummaries = state.showSummaries,
                                         showPreviews = state.showPreviews,
@@ -921,6 +1038,21 @@ fun AnimeScreenLargeImpl(
                                         onEpisodeSwipe = onEpisodeSwipe,
                                         itemModifier = Modifier.ignorePadding(offsetGridPaddingPx),
                                     )
+
+                                    if (isCollapsible) {
+                                        item(
+                                            key = EntryScreenItem.SHOW_ALL_ITEMS,
+                                            contentType = EntryScreenItem.SHOW_ALL_ITEMS,
+                                            span = { GridItemSpan(maxLineSpan) },
+                                        ) {
+                                            ShowAllItemsButton(
+                                                expanded = listExpanded,
+                                                totalCount = episodes.size,
+                                                isManga = false,
+                                                onClick = { listExpanded = !listExpanded },
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

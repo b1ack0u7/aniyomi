@@ -40,6 +40,7 @@ import eu.kanade.presentation.entries.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.data.suggestions.SuggestionMediaType
 import eu.kanade.tachiyomi.source.MangaSource
 import eu.kanade.tachiyomi.source.manga.isLocalOrStub
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -50,6 +51,9 @@ import eu.kanade.tachiyomi.ui.browse.manga.source.browse.BrowseMangaSourceScreen
 import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.GlobalMangaSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoriesTab
 import eu.kanade.tachiyomi.ui.entries.manga.track.MangaTrackInfoDialogHomeScreen
+import eu.kanade.tachiyomi.ui.entries.suggestions.EntrySuggestionsScreen
+import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
+import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.library.manga.MangaLibraryTab
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -150,6 +154,16 @@ class MangaScreen(
                 }
             },
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
+            onRequestSuggestions = screenModel::requestSuggestions,
+            onSuggestionClick = { item ->
+                scope.launch {
+                    navigator.push(item.toDirectEntryScreenOrNull() ?: item.toGlobalSearchScreen())
+                }
+            },
+            onSuggestionsSeeAll = {
+                navigator.push(EntrySuggestionsScreen(successState.manga.id, SuggestionMediaType.MANGA))
+            },
+            onRetrySuggestions = screenModel::retrySuggestions,
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
             onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },

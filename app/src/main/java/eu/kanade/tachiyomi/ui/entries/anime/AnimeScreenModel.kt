@@ -23,6 +23,7 @@ import eu.kanade.domain.entries.anime.model.seasonDownloadedFilter
 import eu.kanade.domain.entries.anime.model.toSAnime
 import eu.kanade.domain.items.episode.interactor.SetSeenStatus
 import eu.kanade.domain.items.episode.interactor.SyncEpisodesWithSource
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.anime.interactor.AddAnimeTracks
 import eu.kanade.domain.track.anime.interactor.RefreshAnimeTracks
 import eu.kanade.domain.track.anime.interactor.TrackEpisode
@@ -31,6 +32,7 @@ import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.presentation.entries.DownloadAction
 import eu.kanade.presentation.entries.anime.components.EpisodeDownloadAction
 import eu.kanade.presentation.util.formattedMessage
+import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.UnmeteredSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -39,6 +41,13 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadCache
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import eu.kanade.tachiyomi.data.suggestions.SuggestionCache
+import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
+import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
+import eu.kanade.tachiyomi.data.suggestions.SuggestionState
+import eu.kanade.tachiyomi.data.suggestions.anime.AnimeSearchFallbackEngine
+import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
+import eu.kanade.tachiyomi.data.suggestions.util.rankForSeed
 import eu.kanade.tachiyomi.data.torrent.service.TorrentServerService
 import eu.kanade.tachiyomi.data.track.EnhancedAnimeTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -53,10 +62,13 @@ import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
@@ -109,6 +121,7 @@ import tachiyomi.source.local.entries.anime.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Calendar
+import java.util.Collections
 import kotlin.math.floor
 
 class AnimeScreenModel(
@@ -146,6 +159,9 @@ class AnimeScreenModel(
     private val getEpisodesByAnimeId: GetEpisodesByAnimeId = Injekt.get(),
     private val filterEpisodesForDownload: FilterEpisodesForDownload = Injekt.get(),
     private val torrentServerUtils: TorrentServerUtils = Injekt.get(),
+    private val sourcePreferences: SourcePreferences = Injekt.get(),
+    private val suggestionCoordinator: SuggestionCoordinator = Injekt.get(),
+    private val searchFallbackEngine: AnimeSearchFallbackEngine = Injekt.get(),
     internal val setAnimeViewerFlags: SetAnimeViewerFlags = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<AnimeScreenModel.State>(State.Loading) {
@@ -272,6 +288,108 @@ class AnimeScreenModel(
             updateSuccessState { it.copy(isRefreshingData = false) }
         }
     }
+
+    // Similar titles - start
+
+    private var suggestionsJob: Job? = null
+    private var suggestionsRequested = false
+
+    // Called once the row is on screen: opening an entry stays free of provider traffic for
+    // users who never scroll down to it.
+    fun requestSuggestions() {
+        if (suggestionsRequested || successState == null) return
+        suggestionsRequested = true
+        loadSuggestions()
+    }
+
+    fun retrySuggestions() {
+        val state = successState ?: return
+        SuggestionCache.invalidateForSeed(state.anime.toSuggestionSeed(), state.anime.url)
+        suggestionsRequested = true
+        loadSuggestions(force = true)
+    }
+
+    // External databases and the entry's own source publish as they arrive, so the row fills
+    // in progressively instead of waiting on the slowest provider.
+    private fun loadSuggestions(force: Boolean = false) {
+        if (!sourcePreferences.similarTitlesEnabled().get()) {
+            updateSuccessState { it.copy(suggestions = SuggestionState.Disabled) }
+            return
+        }
+        val anime = successState?.anime ?: return
+        if (!force && suggestionsJob?.isActive == true) return
+
+        val seed = anime.toSuggestionSeed()
+        val source = sourceManager.getOrStub(anime.source) as? AnimeCatalogueSource
+
+        suggestionsJob?.cancel()
+        suggestionsJob = screenModelScope.launchIO {
+            updateSuccessState { it.copy(suggestions = SuggestionState.Loading) }
+            val collected = Collections.synchronizedList(mutableListOf<SuggestionItem>())
+
+            fun publish(incoming: List<SuggestionItem>) {
+                val ranked = synchronized(collected) {
+                    val known = collected.mapTo(mutableSetOf()) { it.providerUrl }
+                    collected.addAll(incoming.filter { it.providerUrl !in known })
+                    collected.toList()
+                }.rankForSeed(seed, anime.url, SUGGESTIONS_ROW_LIMIT)
+                if (ranked.isNotEmpty()) {
+                    updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) }
+                }
+            }
+
+            try {
+                coroutineScope {
+                    launch {
+                        try {
+                            publish(suggestionCoordinator.fetchSuggestions(seed).items)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logcat(LogPriority.WARN, e) { "External suggestions failed" }
+                        }
+                    }
+                    if (source != null) {
+                        launch {
+                            try {
+                                publish(
+                                    searchFallbackEngine.fetchSearchFallback(
+                                        anime = anime,
+                                        source = source,
+                                        seed = seed,
+                                        onProgress = ::publish,
+                                    ),
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                logcat(LogPriority.WARN, e) { "Source search fallback failed" }
+                            }
+                        }
+                    }
+                }
+
+                val finalItems = synchronized(collected) { collected.toList() }
+                    .rankForSeed(seed, anime.url, SUGGESTIONS_ROW_LIMIT)
+                updateSuccessState {
+                    it.copy(
+                        suggestions = if (finalItems.isEmpty()) {
+                            SuggestionState.Empty
+                        } else {
+                            SuggestionState.Success(finalItems)
+                        },
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Suggestions fetch failed" }
+                updateSuccessState { it.copy(suggestions = SuggestionState.Error(e.message.orEmpty())) }
+            }
+        }
+    }
+
+    // Similar titles - end
 
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
@@ -1614,6 +1732,7 @@ class AnimeScreenModel(
                 anime.nextEpisodeToAir,
                 anime.nextEpisodeAiringAt,
             ),
+            val suggestions: SuggestionState = SuggestionState.Idle,
         ) : State {
 
             val processedSeasons by lazy {
@@ -1750,3 +1869,5 @@ sealed class EpisodeList {
         val isDownloaded = downloadState == AnimeDownload.State.DOWNLOADED
     }
 }
+
+private const val SUGGESTIONS_ROW_LIMIT = 20

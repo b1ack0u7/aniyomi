@@ -24,6 +24,7 @@ import eu.kanade.domain.items.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.items.chapter.interactor.SetReadStatus
 import eu.kanade.domain.items.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.items.chapter.model.toSChapter
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.manga.interactor.AddMangaTracks
 import eu.kanade.domain.track.manga.interactor.RefreshMangaTracks
 import eu.kanade.domain.track.manga.interactor.TrackChapter
@@ -35,9 +36,17 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
+import eu.kanade.tachiyomi.data.suggestions.SuggestionCache
+import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
+import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
+import eu.kanade.tachiyomi.data.suggestions.SuggestionState
+import eu.kanade.tachiyomi.data.suggestions.manga.MangaSearchFallbackEngine
+import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
+import eu.kanade.tachiyomi.data.suggestions.util.rankForSeed
 import eu.kanade.tachiyomi.data.track.EnhancedMangaTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.MangaSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
@@ -45,6 +54,9 @@ import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -88,6 +100,7 @@ import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.source.local.entries.manga.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Collections
 import kotlin.math.floor
 
 class MangaScreenModel(
@@ -119,6 +132,9 @@ class MangaScreenModel(
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val mangaRepository: MangaRepository = Injekt.get(),
     private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get(),
+    private val sourcePreferences: SourcePreferences = Injekt.get(),
+    private val suggestionCoordinator: SuggestionCoordinator = Injekt.get(),
+    private val searchFallbackEngine: MangaSearchFallbackEngine = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -253,6 +269,108 @@ class MangaScreenModel(
             updateSuccessState { it.copy(isRefreshingData = false) }
         }
     }
+
+    // Similar titles - start
+
+    private var suggestionsJob: Job? = null
+    private var suggestionsRequested = false
+
+    // Called once the row is on screen: opening an entry stays free of provider traffic for
+    // users who never scroll down to it.
+    fun requestSuggestions() {
+        if (suggestionsRequested || successState == null) return
+        suggestionsRequested = true
+        loadSuggestions()
+    }
+
+    fun retrySuggestions() {
+        val state = successState ?: return
+        SuggestionCache.invalidateForSeed(state.manga.toSuggestionSeed(), state.manga.url)
+        suggestionsRequested = true
+        loadSuggestions(force = true)
+    }
+
+    // External databases and the entry's own source publish as they arrive, so the row fills
+    // in progressively instead of waiting on the slowest provider.
+    private fun loadSuggestions(force: Boolean = false) {
+        if (!sourcePreferences.similarTitlesEnabled().get()) {
+            updateSuccessState { it.copy(suggestions = SuggestionState.Disabled) }
+            return
+        }
+        val manga = successState?.manga ?: return
+        if (!force && suggestionsJob?.isActive == true) return
+
+        val seed = manga.toSuggestionSeed()
+        val source = Injekt.get<MangaSourceManager>().getOrStub(manga.source) as? CatalogueSource
+
+        suggestionsJob?.cancel()
+        suggestionsJob = screenModelScope.launchIO {
+            updateSuccessState { it.copy(suggestions = SuggestionState.Loading) }
+            val collected = Collections.synchronizedList(mutableListOf<SuggestionItem>())
+
+            fun publish(incoming: List<SuggestionItem>) {
+                val ranked = synchronized(collected) {
+                    val known = collected.mapTo(mutableSetOf()) { it.providerUrl }
+                    collected.addAll(incoming.filter { it.providerUrl !in known })
+                    collected.toList()
+                }.rankForSeed(seed, manga.url, SUGGESTIONS_ROW_LIMIT)
+                if (ranked.isNotEmpty()) {
+                    updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) }
+                }
+            }
+
+            try {
+                coroutineScope {
+                    launch {
+                        try {
+                            publish(suggestionCoordinator.fetchSuggestions(seed).items)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logcat(LogPriority.WARN, e) { "External suggestions failed" }
+                        }
+                    }
+                    if (source != null) {
+                        launch {
+                            try {
+                                publish(
+                                    searchFallbackEngine.fetchSearchFallback(
+                                        manga = manga,
+                                        source = source,
+                                        seed = seed,
+                                        onProgress = ::publish,
+                                    ),
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                logcat(LogPriority.WARN, e) { "Source search fallback failed" }
+                            }
+                        }
+                    }
+                }
+
+                val finalItems = synchronized(collected) { collected.toList() }
+                    .rankForSeed(seed, manga.url, SUGGESTIONS_ROW_LIMIT)
+                updateSuccessState {
+                    it.copy(
+                        suggestions = if (finalItems.isEmpty()) {
+                            SuggestionState.Empty
+                        } else {
+                            SuggestionState.Success(finalItems)
+                        },
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Suggestions fetch failed" }
+                updateSuccessState { it.copy(suggestions = SuggestionState.Error(e.message.orEmpty())) }
+            }
+        }
+    }
+
+    // Similar titles - end
 
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
@@ -1152,6 +1270,7 @@ class MangaScreenModel(
             val isRefreshingData: Boolean = false,
             val dialog: Dialog? = null,
             val hasPromptedToAddBefore: Boolean = false,
+            val suggestions: SuggestionState = SuggestionState.Idle,
         ) : State {
             val processedChapters by lazy {
                 chapters.applyFilters(manga).toList()
@@ -1240,3 +1359,5 @@ sealed class ChapterList {
         val isDownloaded = downloadState == MangaDownload.State.DOWNLOADED
     }
 }
+
+private const val SUGGESTIONS_ROW_LIMIT = 20

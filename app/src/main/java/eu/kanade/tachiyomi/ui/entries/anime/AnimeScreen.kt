@@ -45,6 +45,7 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.data.suggestions.SuggestionMediaType
 import eu.kanade.tachiyomi.data.torrent.service.TorrentServerService
 import eu.kanade.tachiyomi.source.anime.isLocalOrStub
 import eu.kanade.tachiyomi.source.anime.isSourceForTorrents
@@ -56,6 +57,9 @@ import eu.kanade.tachiyomi.ui.browse.anime.source.browse.BrowseAnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoriesTab
 import eu.kanade.tachiyomi.ui.entries.anime.track.AnimeTrackInfoDialogHomeScreen
+import eu.kanade.tachiyomi.ui.entries.suggestions.EntrySuggestionsScreen
+import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
+import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -171,6 +175,16 @@ class AnimeScreen(
                 }
             }.takeIf { successState.anime.fetchType == FetchType.Episodes },
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
+            onRequestSuggestions = screenModel::requestSuggestions,
+            onSuggestionClick = { item ->
+                scope.launch {
+                    navigator.push(item.toDirectEntryScreenOrNull() ?: item.toGlobalSearchScreen())
+                }
+            },
+            onSuggestionsSeeAll = {
+                navigator.push(EntrySuggestionsScreen(successState.anime.id, SuggestionMediaType.ANIME))
+            },
+            onRetrySuggestions = screenModel::retrySuggestions,
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
             onContinueWatching = {
