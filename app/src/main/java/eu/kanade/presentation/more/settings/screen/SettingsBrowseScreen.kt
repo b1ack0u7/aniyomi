@@ -80,6 +80,16 @@ object SettingsBrowseScreen : SearchableSettings {
                 ),
             ),
             Preference.PreferenceGroup(
+                title = stringResource(AYMR.strings.pref_entry_suggestions),
+                preferenceItems = persistentListOf(
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = sourcePreferences.similarTitlesEnabled(),
+                        title = stringResource(AYMR.strings.pref_entry_suggestions),
+                        subtitle = stringResource(AYMR.strings.pref_entry_suggestions_summary),
+                    ),
+                ),
+            ),
+            Preference.PreferenceGroup(
                 title = stringResource(MR.strings.pref_category_nsfw_content),
                 preferenceItems = persistentListOf(
                     Preference.PreferenceItem.SwitchPreference(

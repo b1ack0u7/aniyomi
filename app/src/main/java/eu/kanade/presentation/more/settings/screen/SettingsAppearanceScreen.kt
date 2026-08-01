@@ -45,6 +45,7 @@ object SettingsAppearanceScreen : SearchableSettings {
         return listOf(
             getThemeGroup(uiPreferences = uiPreferences),
             getDisplayGroup(uiPreferences = uiPreferences),
+            getTitleScreensGroup(uiPreferences = uiPreferences),
         )
     }
 
@@ -93,6 +94,27 @@ object SettingsAppearanceScreen : SearchableSettings {
                         (context as? Activity)?.let { ActivityCompat.recreate(it) }
                         true
                     },
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getTitleScreensGroup(
+        uiPreferences: UiPreferences,
+    ): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(AYMR.strings.pref_category_title_screens),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.alwaysShowFullEpisodeList(),
+                    title = stringResource(AYMR.strings.pref_always_show_full_episode_list),
+                    subtitle = stringResource(AYMR.strings.pref_always_show_full_episode_list_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.alwaysShowFullChapterList(),
+                    title = stringResource(AYMR.strings.pref_always_show_full_chapter_list),
+                    subtitle = stringResource(AYMR.strings.pref_always_show_full_chapter_list_summary),
                 ),
             ),
         )

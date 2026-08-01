@@ -617,4 +617,20 @@
     <string name="pref_download_fillermarked_items">Allow downloading of fillermarked episodes</string>
     <string name="show_episode_previews">Episode thumbnails</string>
     <string name="show_episode_summaries">Episode summaries</string>
+
+    <!-- Similar titles -->
+    <string name="similar_titles">Similar Titles</string>
+    <string name="similar_titles_see_all">See all</string>
+    <string name="similar_titles_empty">No similar titles found for this entry.</string>
+    <string name="similar_titles_error">Couldn\'t load similar titles.</string>
+    <string name="pref_entry_suggestions">Suggestions</string>
+    <string name="pref_entry_suggestions_summary">Show similar or recommended titles based on what you\'re reading or watching. Powered by AniList, MyAnimeList and MangaUpdates.</string>
+
+    <!-- Title screens -->
+    <string name="pref_category_title_screens">Title screens</string>
+    <string name="action_show_less">Show less</string>
+    <string name="pref_always_show_full_episode_list">Always show all episodes (anime)</string>
+    <string name="pref_always_show_full_episode_list_summary">Expand the episode list fully and hide the “Show all episodes” button</string>
+    <string name="pref_always_show_full_chapter_list">Always show all chapters (manga)</string>
+    <string name="pref_always_show_full_chapter_list_summary">Expand the chapter list fully and hide the “Show all chapters” button</string>
 </resources>

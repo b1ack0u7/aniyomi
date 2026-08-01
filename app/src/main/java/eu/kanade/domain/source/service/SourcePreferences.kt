@@ -84,6 +84,8 @@ class SourcePreferences(
         false,
     )
 
+    fun similarTitlesEnabled() = preferenceStore.getBoolean("entry_similar_titles_enabled", true)
+
     // SY -->
 
     // fun enableSourceBlacklist() = preferenceStore.getBoolean("eh_enable_source_blacklist", true)

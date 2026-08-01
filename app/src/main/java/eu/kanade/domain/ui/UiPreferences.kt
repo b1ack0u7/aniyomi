@@ -32,6 +32,10 @@ class UiPreferences(
 
     fun relativeTime() = preferenceStore.getBoolean("relative_time_v2", true)
 
+    fun alwaysShowFullEpisodeList() = preferenceStore.getBoolean("always_show_full_episode_list", false)
+
+    fun alwaysShowFullChapterList() = preferenceStore.getBoolean("always_show_full_chapter_list", false)
+
     fun dateFormat() = preferenceStore.getString("app_date_format", "")
 
     fun tabletUiMode() = preferenceStore.getEnum("tablet_ui_mode", TabletUiMode.AUTOMATIC)
