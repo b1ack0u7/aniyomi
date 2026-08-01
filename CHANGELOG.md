@@ -11,6 +11,10 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+### Added
+
+- Show a "Similar Titles" row on anime and manga entry screens, combining recommendations from AniList, MyAnimeList and MangaUpdates with related titles found in the entry's own source. Cards from an installed source open the entry directly, the rest fall back to a global search, and "See all" opens the full list. The row only fetches once you scroll to it, and can be turned off under Settings → Browse ([@b1ack0u7](https://github.com/b1ack0u7))
+- Collapse the chapter and episode lists to the first 5 entries, with a button to show the rest. Settings → Appearance → Title screens has a toggle per side to always show the full list ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.20.1] - 2026-08-01
 ### Fixed
