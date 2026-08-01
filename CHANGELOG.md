@@ -12,6 +12,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## [v0.20.0] - 2026-08-01
 ### Added
 
 - Added a description for the horizontal seek gesture setting ([@kenkoro](https://github.com/kenkoro)) ([#2224](https://github.com/aniyomiorg/aniyomi/pull/2224))
