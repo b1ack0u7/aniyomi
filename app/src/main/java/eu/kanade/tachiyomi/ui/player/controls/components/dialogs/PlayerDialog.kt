@@ -3,8 +3,11 @@ package eu.kanade.tachiyomi.ui.player.controls.components.dialogs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -30,6 +33,11 @@ fun PlayerDialog(
         onDismissRequest()
     }
 
+    // The keyboard insets aren't dispatched to a dialog's own composition — they resolve to zero in
+    // there — so they have to be read from the player's composition and passed in, to keep content
+    // that takes input clear of the keyboard.
+    val imeInsets = WindowInsets.ime
+
     BasicAlertDialog(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -42,7 +50,9 @@ fun PlayerDialog(
     ) {
         Surface(
             shape = MaterialTheme.shapes.large,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(imeInsets),
             tonalElevation = 1.dp,
         ) {
             Column(modifier = Modifier.padding(16.dp)) {

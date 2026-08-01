@@ -6,10 +6,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
@@ -45,6 +47,7 @@ import coil3.size.Size
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.components.EdgeToEdgeDialogWindow
 import eu.kanade.presentation.entries.EditCoverAction
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import kotlinx.collections.immutable.persistentListOf
@@ -64,6 +67,10 @@ fun MangaCoverDialog(
     onEditClick: ((EditCoverAction) -> Unit)?,
     onDismissRequest: () -> Unit,
 ) {
+    // A dialog window doesn't get the system bar insets dispatched to its own composition, so they
+    // have to be read out here to keep the actions clear of the navigation bar.
+    val navigationBarInsets = WindowInsets.navigationBars
+
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(
@@ -71,6 +78,8 @@ fun MangaCoverDialog(
             decorFitsSystemWindows = false, // Doesn't work https://issuetracker.google.com/issues/246909281
         ),
     ) {
+        EdgeToEdgeDialogWindow()
+
         Scaffold(
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             containerColor = Color.Transparent,
@@ -79,7 +88,7 @@ fun MangaCoverDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(4.dp)
-                        .navigationBarsPadding(),
+                        .windowInsetsPadding(navigationBarInsets),
                 ) {
                     ActionsPill {
                         IconButton(onClick = onDismissRequest) {

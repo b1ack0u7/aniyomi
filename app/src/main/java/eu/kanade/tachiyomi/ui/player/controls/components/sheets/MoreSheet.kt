@@ -28,9 +28,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -271,6 +274,11 @@ fun TimePickerDialog(
     modifier: Modifier = Modifier,
     remainingTime: Int = 0,
 ) {
+    // The keyboard insets aren't dispatched to a dialog's own composition — they resolve to zero in
+    // there — so they have to be read from the player's composition and passed in. Without this the
+    // keyboard covers the time input and its confirm button.
+    val imeInsets = WindowInsets.ime
+
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -278,7 +286,9 @@ fun TimePickerDialog(
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surface,
-            modifier = modifier.padding(MaterialTheme.padding.medium),
+            modifier = modifier
+                .windowInsetsPadding(imeInsets)
+                .padding(MaterialTheme.padding.medium),
         ) {
             Column(
                 modifier = Modifier
