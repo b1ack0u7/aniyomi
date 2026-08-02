@@ -35,4 +35,54 @@
         <item quantity="many">Episodios %1$s y %2$d más</item>
         <item quantity="other">Episodios %1$s y %2$d más</item>
     </plurals>
+    <plurals name="relative_time_hours">
+        <item quantity="one">Hace 1 hora</item>
+        <item quantity="many">Hace %1$d horas</item>
+        <item quantity="other">Hace %1$d horas</item>
+    </plurals>
+    <plurals name="relative_time_minutes">
+        <item quantity="one">Hace 1 minuto</item>
+        <item quantity="many">Hace %1$d minutos</item>
+        <item quantity="other">Hace %1$d minutos</item>
+    </plurals>
+    <plurals name="upcoming_relative_time_hours">
+        <item quantity="one">Dentro de 1 hora</item>
+        <item quantity="many">Dentro de %1$d horas</item>
+        <item quantity="other">Dentro de %1$d horas</item>
+    </plurals>
+    <plurals name="upcoming_relative_time_minutes">
+        <item quantity="one">Dentro de 1 minuto</item>
+        <item quantity="many">Dentro de %1$d minutos</item>
+        <item quantity="other">Dentro de %1$d minutos</item>
+    </plurals>
+    <plurals name="missing_items">
+        <item quantity="one">Falta %1$s elemento</item>
+        <item quantity="many">Faltan %1$s elementos</item>
+        <item quantity="other">Faltan %1$s elementos</item>
+    </plurals>
+    <plurals name="anime_num_seasons">
+        <item quantity="one">%d temporada</item>
+        <item quantity="many">%d temporadas</item>
+        <item quantity="other">%d temporadas</item>
+    </plurals>
+    <plurals name="anime_num_entries">
+        <item quantity="one">%d entrada</item>
+        <item quantity="many">%d entradas</item>
+        <item quantity="other">%d entradas</item>
+    </plurals>
+    <plurals name="hoster_video_count">
+        <item quantity="one">%d video</item>
+        <item quantity="many">%d videos</item>
+        <item quantity="other">%d videos</item>
+    </plurals>
+    <plurals name="action_show_all_chapters">
+        <item quantity="one">Mostrar %d capítulo</item>
+        <item quantity="many">Mostrar todos los %d capítulos</item>
+        <item quantity="other">Mostrar todos los %d capítulos</item>
+    </plurals>
+    <plurals name="action_show_all_episodes">
+        <item quantity="one">Mostrar %d episodio</item>
+        <item quantity="many">Mostrar todos los %d episodios</item>
+        <item quantity="other">Mostrar todos los %d episodios</item>
+    </plurals>
 </resources>
