@@ -48,6 +48,9 @@ abstract class AnimeSourcePagingSource(
             }
         } catch (e: Exception) {
             return LoadResult.Error(e)
+        } catch (e: LinkageError) {
+            // An extension built against a newer library than the app bundles; surface it instead of crashing.
+            return LoadResult.Error(e)
         }
 
         return LoadResult.Page(
