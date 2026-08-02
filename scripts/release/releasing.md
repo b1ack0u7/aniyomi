@@ -74,6 +74,45 @@ Two places name the repository and must point at this fork, not upstream:
 - `app/src/main/java/eu/kanade/tachiyomi/data/updater/AppUpdateChecker.kt` — `GITHUB_REPO`,
   which is where the in-app updater looks for new releases.
 
+## Building a signed release locally
+
+Useful to test the actual release build — R8 on, real signature, upgrade over an installed
+release — before cutting a tag.
+
+Create `scripts/local/keys/signing.properties` (the whole `scripts/local` directory is
+gitignored) next to the keystore:
+
+```properties
+storeFile=scripts/local/keys/release.jks
+storePassword=…
+keyAlias=aniyomi
+keyPassword=…
+```
+
+`storeFile` is relative to the repository root. When that file exists, `app/build.gradle.kts`
+signs the `release` build type with it; when it does not — CI — the build keeps producing
+`-unsigned.apk` for the workflow's *Sign APK* step, so nothing about the tag flow changes.
+
+Then run the **Build local release** run configuration in Android Studio — it lives in
+`.idea/runConfigurations/Build_local_release.xml`, which is gitignored like the rest of
+`.idea`, so a fresh clone needs it recreated (Gradle task `:app:assembleRelease`, script
+parameters `-Penable-updater`). The portable equivalent:
+
+```sh
+./gradlew :app:assembleRelease -Penable-updater
+```
+
+The five signed APKs land in `app/build/outputs/apk/release/` as `app-<abi>-release.apk`
+(`app-universal-release.apk` is the one to sideload). The run configuration chains
+`:app:openReleaseApks` after the build, which opens that directory in the file manager;
+drop it from the task list if the build runs unattended. Add `-Pdisable-code-shrink` to skip R8
+when the point is to test a change rather than the release build itself — it is much faster,
+but it is no longer what ships.
+
+Check the wiring with `./gradlew :app:signingReport` — the `release` variant must list the
+same SHA-256 fingerprint as the published APKs. A build signed with a different key installs
+only after uninstalling, which is exactly what this build is meant to catch early.
+
 ## Cutting a release
 
 Work lands on `dev` and reaches `main` through a pull request; the tag is created on
