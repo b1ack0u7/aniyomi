@@ -14,7 +14,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 ### Added
 
 - Show a "Similar Titles" row on anime and manga entry screens, combining recommendations from AniList, MyAnimeList and MangaUpdates with related titles found in the entry's own source. Cards from an installed source open the entry directly, the rest fall back to a global search, and "See all" opens the full list. The row only fetches once you scroll to it, and can be turned off under Settings → Browse ([@b1ack0u7](https://github.com/b1ack0u7))
-- Collapse the chapter and episode lists to the first 5 entries, with a button to show the rest. Settings → Appearance → Title screens has a toggle per side to always show the full list ([@b1ack0u7](https://github.com/b1ack0u7))
+- Collapse the chapter and episode lists to the first 10 entries, with a button to show the rest. Settings → Appearance → Title screens has a toggle per side to always show the full list ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ### Improved
 
@@ -22,7 +22,11 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Fixed
 
+- Fix the scrollbar jumping around, and sometimes backwards, while scrolling the entry screens. Its position was extrapolated from the heights of whatever happened to be on screen, which never held up on a screen that mixes a cover, a description and list rows; it is now measured in list items. Ported from Mihon ([@anirudhn](https://github.com/anirudhn)) ([mihon#2304](https://github.com/mihonapp/mihon/pull/2304)) and carried over to the grid variant the anime screen uses, which upstream had left for later ([@b1ack0u7](https://github.com/b1ack0u7))
+- Fix the scrollbar never appearing when the system animator duration scale is turned off. Ported from Mihon ([@anirudhn](https://github.com/anirudhn)) ([mihon#2398](https://github.com/mihonapp/mihon/pull/2398))
 - Translate the subtitle "Palette" label and fix the word order of the tracker error message in Spanish ([@b1ack0u7](https://github.com/b1ack0u7))
+- Fix the app closing itself when opening a recently updated manga source, such as Comix. Extensions take kotlinx-coroutines from the app instead of bundling their own, and the manga extension repository moved to 1.11.0, where one of its functions is compiled under a new name that the app — still on 1.10.1 — did not have. The app is now on 1.11.0 as well, which keeps the old name too, so extensions built against either version work ([@b1ack0u7](https://github.com/b1ack0u7))
+- Show an error in the source listing instead of closing the app when an extension is built against a newer library than the app ships, on both the anime and manga sides ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.20.1] - 2026-08-01
 ### Fixed
