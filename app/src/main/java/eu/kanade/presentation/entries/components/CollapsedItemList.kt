@@ -14,7 +14,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 
-const val COLLAPSED_ITEM_COUNT = 5
+const val COLLAPSED_ITEM_COUNT = 10
 
 // Separators (missing-count markers) count as decoration, not as entries, so a gap in the
 // numbering never eats into the chapters the user is meant to see.
