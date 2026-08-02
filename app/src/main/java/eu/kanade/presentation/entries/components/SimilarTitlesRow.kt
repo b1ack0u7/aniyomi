@@ -97,7 +97,7 @@ fun SimilarTitlesRow(
                 contentPadding = PaddingValues(horizontal = MaterialTheme.padding.medium),
                 horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
             ) {
-                items(items, key = { it.providerId ?: it.providerUrl }) { item ->
+                items(items, key = { it.providerUrl }) { item ->
                     SimilarTitleCard(item = item, onClick = { onItemClick(item) })
                 }
             }

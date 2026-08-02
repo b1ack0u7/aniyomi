@@ -13,7 +13,7 @@ sealed interface SuggestionState {
     data object Empty : SuggestionState
 
     @Immutable
-    data class Success(val items: List<SuggestionItem>, val hasMore: Boolean = false) : SuggestionState
+    data class Success(val items: List<SuggestionItem>) : SuggestionState
 
     data class Error(val message: String) : SuggestionState
 }
