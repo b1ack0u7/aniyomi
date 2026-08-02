@@ -2,6 +2,7 @@ import mihon.buildlogic.Config
 import mihon.buildlogic.getBuildTime
 import mihon.buildlogic.getCommitCount
 import mihon.buildlogic.getGitSha
+import java.util.Properties
 
 plugins {
     id("mihon.android.application")
@@ -12,6 +13,11 @@ plugins {
 }
 
 shortcutHelper.setFilePath("./shortcuts.xml")
+
+// Absent on CI, where the release APKs are signed afterwards by the workflow.
+val localSigning = rootProject.file("scripts/local/keys/signing.properties")
+    .takeIf { it.exists() }
+    ?.let { file -> Properties().apply { file.inputStream().use(::load) } }
 
 android {
     namespace = "eu.kanade.tachiyomi"
@@ -42,6 +48,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        localSigning?.let { props ->
+            create("localRelease") {
+                storeFile = rootProject.file(props.getProperty("storeFile", "scripts/local/keys/release.jks"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         val debug by getting {
             applicationIdSuffix = ".dev"
@@ -51,6 +68,8 @@ android {
         val release by getting {
             isMinifyEnabled = Config.enableCodeShrink
             isShrinkResources = Config.enableCodeShrink
+
+            signingConfig = signingConfigs.findByName("localRelease")
 
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
 
@@ -330,6 +349,25 @@ androidComponents {
         // Only excluding in standard flavor because this breaks
         // Layout Inspector's Compose tree
         it.packaging.resources.excludes.add("META-INF/*.version")
+    }
+}
+
+tasks.register("openReleaseApks") {
+    description = "Opens the release APK output directory in the system file manager."
+    group = "build"
+    mustRunAfter("assembleRelease")
+
+    val outputDir = layout.buildDirectory.dir("outputs/apk/release")
+    doLast {
+        val dir = outputDir.get().asFile
+        val osName = System.getProperty("os.name")
+        val opener = when {
+            osName.startsWith("Windows") -> "explorer"
+            osName.contains("Mac") -> "open"
+            else -> "xdg-open"
+        }
+        runCatching { ProcessBuilder(opener, dir.absolutePath).start() }
+            .onFailure { logger.lifecycle("APKs in $dir") }
     }
 }
 
