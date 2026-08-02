@@ -569,21 +569,6 @@ private fun AnimeScreenSmallImpl(
                     }
 
                     item(
-                        key = EntryScreenItem.SUGGESTIONS,
-                        contentType = EntryScreenItem.SUGGESTIONS,
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        SimilarTitlesRow(
-                            state = state.suggestions,
-                            onRequestLoad = onRequestSuggestions,
-                            onItemClick = onSuggestionClick,
-                            onSeeAllClick = onSuggestionsSeeAll,
-                            onRetryClick = onRetrySuggestions,
-                            modifier = Modifier.ignorePadding(offsetGridPaddingPx),
-                        )
-                    }
-
-                    item(
                         key = EntryScreenItem.ITEM_HEADER,
                         contentType = EntryScreenItem.ITEM_HEADER,
                         span = { GridItemSpan(maxLineSpan) },
@@ -681,6 +666,21 @@ private fun AnimeScreenSmallImpl(
                                 }
                             }
                         }
+                    }
+
+                    item(
+                        key = EntryScreenItem.SUGGESTIONS,
+                        contentType = EntryScreenItem.SUGGESTIONS,
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        SimilarTitlesRow(
+                            state = state.suggestions,
+                            onRequestLoad = onRequestSuggestions,
+                            onItemClick = onSuggestionClick,
+                            onSeeAllClick = onSuggestionsSeeAll,
+                            onRetryClick = onRetrySuggestions,
+                            modifier = Modifier.ignorePadding(offsetGridPaddingPx),
+                        )
                     }
                 }
             }

@@ -486,19 +486,6 @@ private fun MangaScreenSmallImpl(
                     }
 
                     item(
-                        key = EntryScreenItem.SUGGESTIONS,
-                        contentType = EntryScreenItem.SUGGESTIONS,
-                    ) {
-                        SimilarTitlesRow(
-                            state = state.suggestions,
-                            onRequestLoad = onRequestSuggestions,
-                            onItemClick = onSuggestionClick,
-                            onSeeAllClick = onSuggestionsSeeAll,
-                            onRetryClick = onRetrySuggestions,
-                        )
-                    }
-
-                    item(
                         key = EntryScreenItem.ITEM_HEADER,
                         contentType = EntryScreenItem.ITEM_HEADER,
                     ) {
@@ -535,6 +522,19 @@ private fun MangaScreenSmallImpl(
                                 onClick = { listExpanded = !listExpanded },
                             )
                         }
+                    }
+
+                    item(
+                        key = EntryScreenItem.SUGGESTIONS,
+                        contentType = EntryScreenItem.SUGGESTIONS,
+                    ) {
+                        SimilarTitlesRow(
+                            state = state.suggestions,
+                            onRequestLoad = onRequestSuggestions,
+                            onItemClick = onSuggestionClick,
+                            onSeeAllClick = onSuggestionsSeeAll,
+                            onRetryClick = onRetrySuggestions,
+                        )
                     }
                 }
             }
