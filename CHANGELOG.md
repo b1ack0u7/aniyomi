@@ -16,6 +16,14 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Show a "Similar Titles" row on anime and manga entry screens, combining recommendations from AniList, MyAnimeList and MangaUpdates with related titles found in the entry's own source. Cards from an installed source open the entry directly, the rest fall back to a global search, and "See all" opens the full list. The row only fetches once you scroll to it, and can be turned off under Settings → Browse ([@b1ack0u7](https://github.com/b1ack0u7))
 - Collapse the chapter and episode lists to the first 5 entries, with a button to show the rest. Settings → Appearance → Title screens has a toggle per side to always show the full list ([@b1ack0u7](https://github.com/b1ack0u7))
 
+### Improved
+
+- Complete the Spanish translation, filling in 46 strings and 10 plurals that had no `es` entry — the torrent and TorrServer settings, the server-stall player messages, and the similar-titles and collapsible-list options ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Fixed
+
+- Translate the subtitle "Palette" label and fix the word order of the tracker error message in Spanish ([@b1ack0u7](https://github.com/b1ack0u7))
+
 ## [v0.20.1] - 2026-08-01
 ### Fixed
 
