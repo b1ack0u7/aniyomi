@@ -18,12 +18,11 @@ import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combineTransform
-import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.takeWhile
 import tachiyomi.domain.download.service.DownloadPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -54,32 +53,26 @@ class MangaDownloadJob(context: Context, workerParams: WorkerParameters) : Corou
     }
 
     override suspend fun doWork(): Result {
-        var networkCheck = checkNetworkState(
+        val networkCheck = checkNetworkState(
             applicationContext.activeNetworkState(),
             downloadPreferences.downloadOnlyOverWifi().get(),
         )
-        var active = networkCheck && downloadManager.downloaderStart()
 
-        if (!active) {
+        if (!networkCheck || !downloadManager.downloaderStart()) {
             return Result.failure()
         }
 
         setForegroundSafely()
 
-        coroutineScope {
-            combineTransform(
-                applicationContext.networkStateFlow(),
-                downloadPreferences.downloadOnlyOverWifi().changes(),
-                transform = { a, b -> emit(checkNetworkState(a, b)) },
-            )
-                .onEach { networkCheck = it }
-                .launchIn(this)
-        }
-
-        // Keep the worker running when needed
-        while (active) {
-            active = !isStopped && downloadManager.isRunning && networkCheck
-        }
+        // Keeps the worker alive until the network becomes unusable. checkNetworkState stops the
+        // downloader in that case, and a downloader that finishes on its own cancels this work.
+        combineTransform(
+            applicationContext.networkStateFlow(),
+            downloadPreferences.downloadOnlyOverWifi().changes(),
+            transform = { a, b -> emit(checkNetworkState(a, b)) },
+        )
+            .takeWhile { it }
+            .collect()
 
         return Result.success()
     }
