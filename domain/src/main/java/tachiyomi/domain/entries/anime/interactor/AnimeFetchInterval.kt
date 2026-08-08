@@ -18,9 +18,10 @@ class AnimeFetchInterval(
         anime: Anime,
         dateTime: ZonedDateTime,
         window: Pair<Long, Long>,
+        episodes: List<Episode>? = null,
     ): AnimeUpdate {
         val interval = anime.fetchInterval.takeIf { it < 0 } ?: calculateInterval(
-            episodes = getEpisodesByAnimeId.await(anime.id),
+            episodes = episodes ?: getEpisodesByAnimeId.await(anime.id),
             zone = dateTime.zone,
         )
         val currentWindow = if (window.first == 0L && window.second == 0L) {

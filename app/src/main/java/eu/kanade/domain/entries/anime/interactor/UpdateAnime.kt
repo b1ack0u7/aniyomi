@@ -9,6 +9,7 @@ import tachiyomi.domain.entries.anime.interactor.AnimeFetchInterval
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.model.AnimeUpdate
 import tachiyomi.domain.entries.anime.repository.AnimeRepository
+import tachiyomi.domain.items.episode.model.Episode
 import tachiyomi.source.local.entries.anime.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -103,9 +104,21 @@ class UpdateAnime(
         anime: Anime,
         dateTime: ZonedDateTime = ZonedDateTime.now(),
         window: Pair<Long, Long> = animeFetchInterval.getWindow(dateTime),
+        episodes: List<Episode>? = null,
     ): Boolean {
         return animeRepository.updateAnime(
-            animeFetchInterval.toAnimeUpdate(anime, dateTime, window),
+            animeFetchInterval.toAnimeUpdate(anime, dateTime, window, episodes),
+        )
+    }
+
+    suspend fun awaitUpdateFetchIntervalAndLastUpdate(
+        anime: Anime,
+        dateTime: ZonedDateTime = ZonedDateTime.now(),
+        window: Pair<Long, Long> = animeFetchInterval.getWindow(dateTime),
+    ): Boolean {
+        return animeRepository.updateAnime(
+            animeFetchInterval.toAnimeUpdate(anime, dateTime, window)
+                .copy(lastUpdate = Instant.now().toEpochMilli()),
         )
     }
 

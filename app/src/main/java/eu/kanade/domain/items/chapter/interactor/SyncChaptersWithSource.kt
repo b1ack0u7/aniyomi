@@ -70,14 +70,12 @@ class SyncChaptersWithSource(
             }
 
         val dbChapters = getChaptersByMangaId.await(manga.id)
+        val dbChaptersByUrl = dbChapters.associateBy { it.url }
+        val sourceChapterUrls = sourceChapters.mapTo(HashSet()) { it.url }
 
         val newChapters = mutableListOf<Chapter>()
         val updatedChapters = mutableListOf<Chapter>()
-        val removedChapters = dbChapters.filterNot { dbChapter ->
-            sourceChapters.any { sourceChapter ->
-                dbChapter.url == sourceChapter.url
-            }
-        }
+        val removedChapters = dbChapters.filterNot { it.url in sourceChapterUrls }
 
         // Used to not set upload date of older chapters
         // to a higher value than newer chapters
@@ -101,7 +99,7 @@ class SyncChaptersWithSource(
             )
             chapter = chapter.copy(chapterNumber = chapterNumber)
 
-            val dbChapter = dbChapters.find { it.url == chapter.url }
+            val dbChapter = dbChaptersByUrl[chapter.url]
 
             if (dbChapter == null) {
                 val toAddChapter = if (chapter.dateUpload == 0L) {
@@ -134,7 +132,9 @@ class SyncChaptersWithSource(
                         scanlator = chapter.scanlator,
                         sourceOrder = chapter.sourceOrder,
                     )
-                    if (chapter.dateUpload != 0L) {
+                    // Only ever fill in a missing date; sources without real upload dates report
+                    // the current time and would otherwise overwrite the recorded one every update.
+                    if (chapter.dateUpload != 0L && dbChapter.dateUpload == 0L) {
                         toChangeChapter = toChangeChapter.copy(dateUpload = chapter.dateUpload)
                     }
                     updatedChapters.add(toChangeChapter)
@@ -145,10 +145,14 @@ class SyncChaptersWithSource(
         // Return if there's nothing to add, delete, or update to avoid unnecessary db transactions.
         if (newChapters.isEmpty() && removedChapters.isEmpty() && updatedChapters.isEmpty()) {
             if (manualFetch || manga.fetchInterval == 0 || manga.nextUpdate < fetchWindow.first) {
+                // Nothing was written, so the chapters already read above are still current and
+                // save the interval calculation a second pass over the whole chapter list.
+                val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
                 updateManga.awaitUpdateFetchInterval(
                     manga,
                     now,
                     fetchWindow,
+                    chapters = dbChapters.filterNot { it.scanlator in excludedScanlators },
                 )
             }
             return emptyList()
@@ -219,11 +223,9 @@ class SyncChaptersWithSource(
             val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
             updateChapter.awaitAll(chapterUpdates)
         }
-        updateManga.awaitUpdateFetchInterval(manga, now, fetchWindow)
-
-        // Set this manga as updated since chapters were changed
+        // Also sets this manga as updated since chapters were changed.
         // Note that last_update actually represents last time the chapter list changed at all
-        updateManga.awaitUpdateLastUpdate(manga.id)
+        updateManga.awaitUpdateFetchIntervalAndLastUpdate(manga, now, fetchWindow)
 
         val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
 

@@ -68,14 +68,12 @@ class SyncEpisodesWithSource(
             }
 
         val dbEpisodes = getEpisodesByAnimeId.await(anime.id)
+        val dbEpisodesByUrl = dbEpisodes.associateBy { it.url }
+        val sourceEpisodeUrls = sourceEpisodes.mapTo(HashSet()) { it.url }
 
         val newEpisodes = mutableListOf<Episode>()
         val updatedEpisodes = mutableListOf<Episode>()
-        val removedEpisodes = dbEpisodes.filterNot { dbEpisode ->
-            sourceEpisodes.any { sourceEpisode ->
-                dbEpisode.url == sourceEpisode.url
-            }
-        }
+        val removedEpisodes = dbEpisodes.filterNot { it.url in sourceEpisodeUrls }
 
         // Used to not set upload date of older episodes
         // to a higher value than newer episodes
@@ -99,7 +97,7 @@ class SyncEpisodesWithSource(
             )
             episode = episode.copy(episodeNumber = episodeNumber)
 
-            val dbEpisode = dbEpisodes.find { it.url == episode.url }
+            val dbEpisode = dbEpisodesByUrl[episode.url]
 
             if (dbEpisode == null) {
                 val toAddEpisode = if (episode.dateUpload == 0L) {
@@ -133,7 +131,9 @@ class SyncEpisodesWithSource(
                         summary = episode.summary,
                         sourceOrder = episode.sourceOrder,
                     )
-                    if (episode.dateUpload != 0L) {
+                    // Only ever fill in a missing date; sources without real upload dates report
+                    // the current time and would otherwise overwrite the recorded one every update.
+                    if (episode.dateUpload != 0L && dbEpisode.dateUpload == 0L) {
                         toChangeEpisode = toChangeEpisode.copy(
                             dateUpload = sourceEpisode.dateUpload,
                         )
@@ -156,10 +156,13 @@ class SyncEpisodesWithSource(
         // Return if there's nothing to add, delete, or update to avoid unnecessary db transactions.
         if (newEpisodes.isEmpty() && removedEpisodes.isEmpty() && updatedEpisodes.isEmpty()) {
             if (manualFetch || anime.fetchInterval == 0 || anime.nextUpdate < fetchWindow.first) {
+                // Nothing was written, so the episodes already read above are still current and
+                // save the interval calculation a second pass over the whole episode list.
                 updateAnime.awaitUpdateFetchInterval(
                     anime,
                     now,
                     fetchWindow,
+                    episodes = dbEpisodes,
                 )
             }
             return emptyList()
@@ -230,11 +233,9 @@ class SyncEpisodesWithSource(
             val episodeUpdates = updatedEpisodes.map { it.toEpisodeUpdate() }
             updateEpisode.awaitAll(episodeUpdates)
         }
-        updateAnime.awaitUpdateFetchInterval(anime, now, fetchWindow)
-
-        // Set this anime as updated since episodes were changed
+        // Also sets this anime as updated since episodes were changed.
         // Note that last_update actually represents last time the episode list changed at all
-        updateAnime.awaitUpdateLastUpdate(anime.id)
+        updateAnime.awaitUpdateFetchIntervalAndLastUpdate(anime, now, fetchWindow)
 
         return updatedToAdd.filterNot { it.url in changedOrDuplicateReadUrls }
     }

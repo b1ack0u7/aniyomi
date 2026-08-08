@@ -7,6 +7,7 @@ import tachiyomi.domain.entries.manga.interactor.MangaFetchInterval
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.entries.manga.model.MangaUpdate
 import tachiyomi.domain.entries.manga.repository.MangaRepository
+import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.source.local.entries.manga.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -81,9 +82,21 @@ class UpdateManga(
         manga: Manga,
         dateTime: ZonedDateTime = ZonedDateTime.now(),
         window: Pair<Long, Long> = mangaFetchInterval.getWindow(dateTime),
+        chapters: List<Chapter>? = null,
     ): Boolean {
         return mangaRepository.updateManga(
-            mangaFetchInterval.toMangaUpdate(manga, dateTime, window),
+            mangaFetchInterval.toMangaUpdate(manga, dateTime, window, chapters),
+        )
+    }
+
+    suspend fun awaitUpdateFetchIntervalAndLastUpdate(
+        manga: Manga,
+        dateTime: ZonedDateTime = ZonedDateTime.now(),
+        window: Pair<Long, Long> = mangaFetchInterval.getWindow(dateTime),
+    ): Boolean {
+        return mangaRepository.updateManga(
+            mangaFetchInterval.toMangaUpdate(manga, dateTime, window)
+                .copy(lastUpdate = Instant.now().toEpochMilli()),
         )
     }
 
