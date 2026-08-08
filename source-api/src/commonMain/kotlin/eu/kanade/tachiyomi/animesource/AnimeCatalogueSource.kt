@@ -2,6 +2,9 @@ package eu.kanade.tachiyomi.animesource
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SAnimeUpdate
+import eu.kanade.tachiyomi.animesource.model.SEpisode
 import rx.Observable
 import tachiyomi.core.common.util.lang.awaitSingle
 
@@ -16,6 +19,16 @@ interface AnimeCatalogueSource : AnimeSource {
      * Whether the source has support for latest updates.
      */
     val supportsLatest: Boolean
+
+    /**
+     * @since extensions-lib 18
+     */
+    override suspend fun getAnimeUpdate(
+        anime: SAnime,
+        episodes: List<SEpisode>,
+        fetchDetails: Boolean,
+        fetchEpisodes: Boolean,
+    ): SAnimeUpdate = defaultAnimeUpdate(anime, episodes, fetchDetails, fetchEpisodes)
 
     /**
      * Get a page with a list of anime.

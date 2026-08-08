@@ -2,9 +2,12 @@ package eu.kanade.tachiyomi.animesource
 
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SAnimeUpdate
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.util.awaitSingle
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import rx.Observable
 
 /**
@@ -24,6 +27,30 @@ interface AnimeSource {
 
     val lang: String
         get() = ""
+
+    /**
+     * Fetches updated information for an anime.
+     *
+     * Depending on the provided flags or source availability, this may include updated anime
+     * metadata, available episodes, or both. If a value is not requested, the existing provided
+     * value can be returned as-is.
+     *
+     * Sources targeting older versions of the library are served by the default implementation,
+     * which delegates to [getAnimeDetails] and [getEpisodeList].
+     *
+     * @since extensions-lib 18
+     * @param anime the anime to fetch updates for.
+     * @param episodes existing episodes of the anime. May be empty when [fetchEpisodes] is true,
+     * since the caller then has no reason to load them.
+     * @param fetchDetails whether to include updated anime details.
+     * @param fetchEpisodes whether to include available episodes.
+     */
+    suspend fun getAnimeUpdate(
+        anime: SAnime,
+        episodes: List<SEpisode>,
+        fetchDetails: Boolean,
+        fetchEpisodes: Boolean,
+    ): SAnimeUpdate = defaultAnimeUpdate(anime, episodes, fetchDetails, fetchEpisodes)
 
     /**
      * Get the updated details for a anime.
@@ -110,4 +137,22 @@ interface AnimeSource {
     )
     fun fetchVideoList(episode: SEpisode): Observable<List<Video>> =
         throw IllegalStateException("Not used")
+}
+
+/**
+ * Backing implementation of [AnimeSource.getAnimeUpdate], shared by the interfaces exposing it so
+ * that sources built against any version of the library resolve an implementation.
+ */
+internal suspend fun AnimeSource.defaultAnimeUpdate(
+    anime: SAnime,
+    episodes: List<SEpisode>,
+    fetchDetails: Boolean,
+    fetchEpisodes: Boolean,
+): SAnimeUpdate = supervisorScope {
+    val deferredAnime = if (fetchDetails) async { getAnimeDetails(anime) } else null
+    val deferredEpisodes = if (fetchEpisodes) async { getEpisodeList(anime) } else null
+    SAnimeUpdate(
+        anime = deferredAnime?.await() ?: anime,
+        episodes = deferredEpisodes?.await() ?: episodes,
+    )
 }
