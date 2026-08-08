@@ -48,6 +48,9 @@ class MangaLibraryUpdateNotifier(
     private val sourceManager: MangaSourceManager = Injekt.get(),
 ) {
 
+    @Volatile
+    private var lastProgressNotification = 0L
+
     private val percentFormatter = NumberFormat.getPercentInstance().apply {
         roundingMode = RoundingMode.DOWN
         maximumFractionDigits = 0
@@ -93,6 +96,14 @@ class MangaLibraryUpdateNotifier(
      * @param total the total progress.
      */
     fun showProgressNotification(manga: List<Manga>, current: Int, total: Int) {
+        // Entries are announced both before and after they are updated, which bursts past the
+        // system's notification rate limit when a source answers quickly.
+        val now = System.currentTimeMillis()
+        if (current < total && now - lastProgressNotification < PROGRESS_NOTIFICATION_INTERVAL_MS) {
+            return
+        }
+        lastProgressNotification = now
+
         progressNotificationBuilder
             .setContentTitle(
                 context.stringResource(
@@ -394,6 +405,7 @@ class MangaLibraryUpdateNotifier(
     }
 }
 
+private const val PROGRESS_NOTIFICATION_INTERVAL_MS = 500L
 private const val NOTIF_MAX_CHAPTERS = 5
 private const val NOTIF_TITLE_MAX_LEN = 45
 private const val NOTIF_ICON_SIZE = 192
