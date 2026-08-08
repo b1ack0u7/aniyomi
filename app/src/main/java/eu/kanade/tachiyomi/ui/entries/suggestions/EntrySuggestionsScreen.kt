@@ -44,11 +44,11 @@ import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionMediaType
 import eu.kanade.tachiyomi.data.suggestions.SuggestionSeed
+import eu.kanade.tachiyomi.data.suggestions.SuggestionStream
 import eu.kanade.tachiyomi.data.suggestions.anime.AnimeSearchFallbackEngine
 import eu.kanade.tachiyomi.data.suggestions.manga.MangaSearchFallbackEngine
 import eu.kanade.tachiyomi.data.suggestions.suggestionCoverModel
 import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
-import eu.kanade.tachiyomi.data.suggestions.util.rankForSeed
 import eu.kanade.tachiyomi.source.CatalogueSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -69,7 +69,6 @@ import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.Collections
 
 // Takes the entry id rather than a pre-built result list so the screen survives process death
 // and can re-run the pipeline on its own.
@@ -187,15 +186,21 @@ private fun SuggestionGrid(
             }
         }
 
-        if (showLoadingFooter || visibleItems.size < items.size) {
-            item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = MaterialTheme.padding.medium),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
+        item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = MaterialTheme.padding.medium),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                if (showLoadingFooter || visibleItems.size < items.size) {
                     CircularProgressIndicator()
+                } else {
+                    Text(
+                        text = stringResource(AYMR.strings.similar_titles_end),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -210,8 +215,8 @@ class EntrySuggestionsScreenModel(
     private val mangaSearchFallbackEngine: MangaSearchFallbackEngine = Injekt.get(),
 ) : StateScreenModel<EntrySuggestionsScreenModel.State>(State()) {
 
-    private val collected = Collections.synchronizedList(mutableListOf<SuggestionItem>())
     private var request: Request? = null
+    private var stream: SuggestionStream? = null
     private var loadMoreJob: Job? = null
 
     init {
@@ -230,19 +235,35 @@ class EntrySuggestionsScreenModel(
                     return@launchIO
                 }
 
+                val stream = SuggestionStream(
+                    scope = this,
+                    seed = request.seed,
+                    entryUrl = request.entryUrl,
+                    limit = SCREEN_LIMIT,
+                ) { ranked -> mutableState.update { it.copy(items = ranked) } }
+                this@EntrySuggestionsScreenModel.stream = stream
+
                 coroutineScope {
                     launch {
                         try {
-                            publish(coordinator.fetchSuggestions(request.seed, PROVIDER_LIMIT).items)
+                            stream.publishExternal(
+                                coordinator.fetchSuggestions(
+                                    request.seed,
+                                    PROVIDER_LIMIT,
+                                    stream::publishExternal,
+                                ).items,
+                            )
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             logcat { "[EntrySuggestionsScreenModel] external failed: ${e.message}" }
+                        } finally {
+                            stream.releaseSource()
                         }
                     }
                     launch {
                         try {
-                            publish(request.pager?.loadInitial(::publish).orEmpty())
+                            stream.publishSource(request.pager?.loadInitial(stream::publishSource).orEmpty())
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -253,7 +274,7 @@ class EntrySuggestionsScreenModel(
 
                 mutableState.update {
                     it.copy(
-                        items = rank(),
+                        items = stream.snapshot(),
                         isLoading = false,
                         canLoadMore = request.pager?.hasNextPage == true,
                     )
@@ -274,7 +295,7 @@ class EntrySuggestionsScreenModel(
         loadMoreJob = screenModelScope.launchIO {
             mutableState.update { it.copy(isLoadingMore = true) }
             try {
-                publish(pager.loadNextPage())
+                stream?.publishSource(pager.loadNextPage())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -282,24 +303,6 @@ class EntrySuggestionsScreenModel(
             }
             mutableState.update { it.copy(isLoadingMore = false, canLoadMore = pager.hasNextPage) }
         }
-    }
-
-    private fun publish(incoming: List<SuggestionItem>) {
-        if (incoming.isEmpty()) return
-        synchronized(collected) {
-            val known = collected.mapTo(mutableSetOf()) { it.providerUrl }
-            collected.addAll(incoming.filter { it.providerUrl !in known })
-        }
-        val ranked = rank()
-        if (ranked.isNotEmpty()) {
-            mutableState.update { it.copy(items = ranked) }
-        }
-    }
-
-    private fun rank(): List<SuggestionItem> {
-        val request = request ?: return emptyList()
-        return synchronized(collected) { collected.toList() }
-            .rankForSeed(request.seed, request.entryUrl, SCREEN_LIMIT)
     }
 
     private class Request(

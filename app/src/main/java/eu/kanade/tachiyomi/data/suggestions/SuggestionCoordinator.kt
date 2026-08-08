@@ -22,9 +22,12 @@ class SuggestionCoordinator {
         }
     }
 
+    // onProgress fires per provider: a cached one shouldn't wait behind whichever provider is
+    // slowest or timing out.
     suspend fun fetchSuggestions(
         seed: SuggestionSeed,
         limit: Int = DEFAULT_LIMIT,
+        onProgress: ((List<SuggestionItem>) -> Unit)? = null,
     ): SuggestionFetchResult = supervisorScope {
         val boundedLimit = limit.coerceIn(1, MAX_LIMIT)
         val sources = createSources(seed.mediaType)
@@ -46,6 +49,7 @@ class SuggestionCoordinator {
                         logcat { "[Coordinator] ${source.name} TIMEOUT" }
                         emptyList<SuggestionItem>() to true
                     } else {
+                        if (result.isNotEmpty()) onProgress?.invoke(result)
                         result to false
                     }
                 } catch (e: CancellationException) {

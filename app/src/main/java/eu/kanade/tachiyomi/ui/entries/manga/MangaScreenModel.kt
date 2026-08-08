@@ -38,11 +38,10 @@ import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCache
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
-import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionState
+import eu.kanade.tachiyomi.data.suggestions.SuggestionStream
 import eu.kanade.tachiyomi.data.suggestions.manga.MangaSearchFallbackEngine
 import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
-import eu.kanade.tachiyomi.data.suggestions.util.rankForSeed
 import eu.kanade.tachiyomi.data.track.EnhancedMangaTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.HttpException
@@ -100,7 +99,6 @@ import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.source.local.entries.manga.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.Collections
 import kotlin.math.floor
 
 class MangaScreenModel(
@@ -306,39 +304,40 @@ class MangaScreenModel(
         suggestionsJob?.cancel()
         suggestionsJob = screenModelScope.launchIO {
             updateSuccessState { it.copy(suggestions = SuggestionState.Loading) }
-            val collected = Collections.synchronizedList(mutableListOf<SuggestionItem>())
-
-            fun publish(incoming: List<SuggestionItem>) {
-                val ranked = synchronized(collected) {
-                    val known = collected.mapTo(mutableSetOf()) { it.providerUrl }
-                    collected.addAll(incoming.filter { it.providerUrl !in known })
-                    collected.toList()
-                }.rankForSeed(seed, manga.url, SUGGESTIONS_ROW_LIMIT)
-                if (ranked.isNotEmpty()) {
-                    updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) }
-                }
-            }
+            val stream = SuggestionStream(
+                scope = this,
+                seed = seed,
+                entryUrl = manga.url,
+                limit = SUGGESTIONS_ROW_LIMIT,
+            ) { ranked -> updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) } }
 
             try {
                 coroutineScope {
                     launch {
                         try {
-                            publish(suggestionCoordinator.fetchSuggestions(seed).items)
+                            stream.publishExternal(
+                                suggestionCoordinator.fetchSuggestions(
+                                    seed,
+                                    onProgress = stream::publishExternal,
+                                ).items,
+                            )
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             logcat(LogPriority.WARN, e) { "External suggestions failed" }
+                        } finally {
+                            stream.releaseSource()
                         }
                     }
                     if (source != null) {
                         launch {
                             try {
-                                publish(
+                                stream.publishSource(
                                     searchFallbackEngine.fetchSearchFallback(
                                         manga = manga,
                                         source = source,
                                         seed = seed,
-                                        onProgress = ::publish,
+                                        onProgress = stream::publishSource,
                                     ),
                                 )
                             } catch (e: CancellationException) {
@@ -350,8 +349,7 @@ class MangaScreenModel(
                     }
                 }
 
-                val finalItems = synchronized(collected) { collected.toList() }
-                    .rankForSeed(seed, manga.url, SUGGESTIONS_ROW_LIMIT)
+                val finalItems = stream.snapshot()
                 updateSuccessState {
                     it.copy(
                         suggestions = if (finalItems.isEmpty()) {

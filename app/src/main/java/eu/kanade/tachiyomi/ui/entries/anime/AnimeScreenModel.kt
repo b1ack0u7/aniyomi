@@ -23,6 +23,7 @@ import eu.kanade.domain.entries.anime.model.seasonDownloadedFilter
 import eu.kanade.domain.entries.anime.model.toSAnime
 import eu.kanade.domain.items.episode.interactor.SetSeenStatus
 import eu.kanade.domain.items.episode.interactor.SyncEpisodesWithSource
+import eu.kanade.domain.items.episode.model.toSEpisode
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.anime.interactor.AddAnimeTracks
 import eu.kanade.domain.track.anime.interactor.RefreshAnimeTracks
@@ -43,11 +44,10 @@ import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCache
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
-import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionState
+import eu.kanade.tachiyomi.data.suggestions.SuggestionStream
 import eu.kanade.tachiyomi.data.suggestions.anime.AnimeSearchFallbackEngine
 import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
-import eu.kanade.tachiyomi.data.suggestions.util.rankForSeed
 import eu.kanade.tachiyomi.data.torrent.service.TorrentServerService
 import eu.kanade.tachiyomi.data.track.EnhancedAnimeTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -121,7 +121,6 @@ import tachiyomi.source.local.entries.anime.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Calendar
-import java.util.Collections
 import kotlin.math.floor
 
 class AnimeScreenModel(
@@ -276,12 +275,12 @@ class AnimeScreenModel(
             observeTrackers()
 
             // Fetch info-episodes when needed
-            if (screenModelScope.isActive) {
-                val fetchFromSourceTasks = listOf(
-                    async { if (needRefreshInfo) fetchAnimeFromSource() },
-                    async { if (needRefreshEpisode || needRefreshSeason) fetchEpisodesAndSeasonsFromSource() },
+            if ((needRefreshInfo || needRefreshEpisode || needRefreshSeason) && screenModelScope.isActive) {
+                fetchAllFromSource(
+                    manualFetch = false,
+                    fetchDetails = needRefreshInfo,
+                    fetchItems = needRefreshEpisode || needRefreshSeason,
                 )
-                fetchFromSourceTasks.awaitAll()
             }
 
             // Initial loading finished
@@ -325,39 +324,40 @@ class AnimeScreenModel(
         suggestionsJob?.cancel()
         suggestionsJob = screenModelScope.launchIO {
             updateSuccessState { it.copy(suggestions = SuggestionState.Loading) }
-            val collected = Collections.synchronizedList(mutableListOf<SuggestionItem>())
-
-            fun publish(incoming: List<SuggestionItem>) {
-                val ranked = synchronized(collected) {
-                    val known = collected.mapTo(mutableSetOf()) { it.providerUrl }
-                    collected.addAll(incoming.filter { it.providerUrl !in known })
-                    collected.toList()
-                }.rankForSeed(seed, anime.url, SUGGESTIONS_ROW_LIMIT)
-                if (ranked.isNotEmpty()) {
-                    updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) }
-                }
-            }
+            val stream = SuggestionStream(
+                scope = this,
+                seed = seed,
+                entryUrl = anime.url,
+                limit = SUGGESTIONS_ROW_LIMIT,
+            ) { ranked -> updateSuccessState { it.copy(suggestions = SuggestionState.Success(ranked)) } }
 
             try {
                 coroutineScope {
                     launch {
                         try {
-                            publish(suggestionCoordinator.fetchSuggestions(seed).items)
+                            stream.publishExternal(
+                                suggestionCoordinator.fetchSuggestions(
+                                    seed,
+                                    onProgress = stream::publishExternal,
+                                ).items,
+                            )
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             logcat(LogPriority.WARN, e) { "External suggestions failed" }
+                        } finally {
+                            stream.releaseSource()
                         }
                     }
                     if (source != null) {
                         launch {
                             try {
-                                publish(
+                                stream.publishSource(
                                     searchFallbackEngine.fetchSearchFallback(
                                         anime = anime,
                                         source = source,
                                         seed = seed,
-                                        onProgress = ::publish,
+                                        onProgress = stream::publishSource,
                                     ),
                                 )
                             } catch (e: CancellationException) {
@@ -369,8 +369,7 @@ class AnimeScreenModel(
                     }
                 }
 
-                val finalItems = synchronized(collected) { collected.toList() }
-                    .rankForSeed(seed, anime.url, SUGGESTIONS_ROW_LIMIT)
+                val finalItems = stream.snapshot()
                 updateSuccessState {
                     it.copy(
                         suggestions = if (finalItems.isEmpty()) {
@@ -394,11 +393,11 @@ class AnimeScreenModel(
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
             updateSuccessState { it.copy(isRefreshingData = true) }
-            val fetchFromSourceTasks = listOf(
-                async { fetchAnimeFromSource(manualFetch) },
-                async { fetchEpisodesAndSeasonsFromSource(manualFetch) },
+            fetchAllFromSource(
+                manualFetch = manualFetch,
+                fetchDetails = true,
+                fetchItems = true,
             )
-            fetchFromSourceTasks.awaitAll()
             updateSuccessState { it.copy(isRefreshingData = false) }
             successState?.let { updateAiringTime(it.anime, it.trackItems, manualFetch) }
         }
@@ -407,15 +406,91 @@ class AnimeScreenModel(
     // Anime info - start
 
     /**
-     * Fetch anime information from source.
+     * Fetch anime information and/or its episodes or seasons from the source.
+     *
+     * For episode-based anime, details and episodes are requested in a single
+     * [AnimeSource.getAnimeUpdate] call, as sources are allowed to reject concurrent updates for
+     * the same anime. Season lists have no combined call, so they follow the details request.
      */
+    private suspend fun fetchAllFromSource(
+        manualFetch: Boolean,
+        fetchDetails: Boolean,
+        fetchItems: Boolean,
+    ) {
+        val state = successState ?: return
+        startTorrentServer(state.source)
+
+        when (state.anime.fetchType) {
+            FetchType.Episodes -> fetchAnimeAndEpisodesFromSource(manualFetch, fetchDetails, fetchItems)
+            FetchType.Seasons -> {
+                if (fetchDetails) fetchAnimeFromSource(manualFetch)
+                if (fetchItems) fetchSeasonsFromSource(manualFetch)
+            }
+        }
+    }
+
+    private suspend fun fetchAnimeAndEpisodesFromSource(
+        manualFetch: Boolean,
+        fetchDetails: Boolean,
+        fetchEpisodes: Boolean,
+    ) {
+        val state = successState ?: return
+        try {
+            withIOContext {
+                val update = state.source.getAnimeUpdate(
+                    anime = state.anime.toSAnime(),
+                    episodes = state.episodes.map { it.episode.toSEpisode() },
+                    fetchDetails = fetchDetails,
+                    fetchEpisodes = fetchEpisodes,
+                )
+
+                if (fetchDetails) {
+                    updateAnime.awaitUpdateFromSource(state.anime, update.anime, manualFetch)
+                }
+
+                if (fetchEpisodes) {
+                    val newEpisodes = syncEpisodesWithSource.await(
+                        update.episodes,
+                        state.anime,
+                        state.source,
+                        manualFetch,
+                    )
+
+                    if (manualFetch) {
+                        downloadNewEpisodes(newEpisodes)
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            // Ignore early hints "errors" that aren't handled by OkHttp
+            if (e is HttpException && e.code == 103) return
+
+            val message = if (e is NoEpisodesException) {
+                context.stringResource(AYMR.strings.no_episodes_error)
+            } else {
+                logcat(LogPriority.ERROR, e)
+                with(context) { e.formattedMessage }
+            }
+
+            screenModelScope.launch {
+                snackbarHostState.showSnackbar(message = message)
+            }
+            val newAnime = animeRepository.getAnimeById(animeId)
+            updateSuccessState { it.copy(anime = newAnime, isRefreshingData = false) }
+        }
+    }
+
     private suspend fun fetchAnimeFromSource(manualFetch: Boolean = false) {
         val state = successState ?: return
         try {
             withIOContext {
-                startTorrentServer(state.source)
-                val networkAnime = state.source.getAnimeDetails(state.anime.toSAnime())
-                updateAnime.awaitUpdateFromSource(state.anime, networkAnime, manualFetch)
+                val update = state.source.getAnimeUpdate(
+                    anime = state.anime.toSAnime(),
+                    episodes = emptyList(),
+                    fetchDetails = true,
+                    fetchEpisodes = false,
+                )
+                updateAnime.awaitUpdateFromSource(state.anime, update.anime, manualFetch)
             }
         } catch (e: Throwable) {
             // Ignore early hints "errors" that aren't handled by OkHttp
@@ -713,28 +788,6 @@ class AnimeScreenModel(
         }
     }
 
-    private suspend fun fetchEpisodesFromSource(manualFetch: Boolean = false) {
-        val state = successState ?: return
-        try {
-            withIOContext {
-                updateEpisodesFromSource(state.anime, state.source, manualFetch)
-            }
-        } catch (e: Throwable) {
-            val message = if (e is NoEpisodesException) {
-                context.stringResource(AYMR.strings.no_episodes_error)
-            } else {
-                logcat(LogPriority.ERROR, e)
-                with(context) { e.formattedMessage }
-            }
-
-            screenModelScope.launch {
-                snackbarHostState.showSnackbar(message = message)
-            }
-            val newAnime = animeRepository.getAnimeById(animeId)
-            updateSuccessState { it.copy(anime = newAnime, isRefreshingData = false) }
-        }
-    }
-
     private suspend fun updateEpisodesFromSource(
         anime: Anime,
         source: AnimeSource,
@@ -795,20 +848,6 @@ class AnimeScreenModel(
             TorrentServerService.start()
             TorrentServerService.wait(10)
             torrentServerUtils.setTrackersList()
-        }
-    }
-
-    /**
-     * Requests an updated list of episodes and seasons from the source.
-     */
-    private suspend fun fetchEpisodesAndSeasonsFromSource(manualFetch: Boolean = false) {
-        val state = successState ?: return
-
-        startTorrentServer(state.source)
-
-        when (state.anime.fetchType) {
-            FetchType.Seasons -> fetchSeasonsFromSource(manualFetch)
-            FetchType.Episodes -> fetchEpisodesFromSource(manualFetch)
         }
     }
 
