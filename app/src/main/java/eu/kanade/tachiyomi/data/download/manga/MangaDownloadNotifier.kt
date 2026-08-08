@@ -49,6 +49,13 @@ internal class MangaDownloadNotifier(private val context: Context) {
     private var isDownloading = false
 
     /**
+     * Last time a progress update was posted. Pages complete far faster than the notification is
+     * worth redrawing, and each post is a binder round trip.
+     */
+    @Volatile
+    private var lastProgressUpdate = 0L
+
+    /**
      * Shows a notification from this builder.
      *
      * @param id the id of the notification.
@@ -71,6 +78,11 @@ internal class MangaDownloadNotifier(private val context: Context) {
      * @param download download object containing download information.
      */
     fun onProgressChange(download: MangaDownload) {
+        val now = System.currentTimeMillis()
+        // isDownloading is cleared on every state change, so those always redraw immediately
+        if (isDownloading && now - lastProgressUpdate < PROGRESS_UPDATE_INTERVAL_MS) return
+        lastProgressUpdate = now
+
         with(progressNotificationBuilder) {
             if (!isDownloading) {
                 setSmallIcon(android.R.drawable.stat_sys_download)
@@ -231,3 +243,5 @@ internal class MangaDownloadNotifier(private val context: Context) {
         isDownloading = false
     }
 }
+
+private const val PROGRESS_UPDATE_INTERVAL_MS = 200L
