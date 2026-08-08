@@ -34,7 +34,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -126,8 +125,7 @@ class AnimeDownloader(
 
     init {
         scope.launch {
-            val episodes = async { store.restore() }
-            addAllToQueue(episodes.await())
+            addAllToQueue(store.restore())
         }
     }
 
@@ -207,7 +205,7 @@ class AnimeDownloader(
                             it.status.value <= AnimeDownload.State.DOWNLOADING.value
                         } // Ignore completed downloads, leave them in the queue
                         .groupBy { it.source }
-                        .toList().take(3) // Concurrently download from 5 different sources
+                        .toList().take(3)
                         .map { (_, downloads) -> downloads.first() }
                     emit(activeDownloads)
 
@@ -291,13 +289,22 @@ class AnimeDownloader(
         val source = sourceManager.get(anime.source) as? AnimeHttpSource ?: return
         val wasEmpty = queueState.value.isEmpty()
 
+        // Listing the anime directory once beats walking the tree per episode, which costs a
+        // provider query per level on SAF storage.
+        val downloadedDirNames = provider.findAnimeDir(anime.title, source)
+            ?.listFiles().orEmpty()
+            .mapNotNullTo(hashSetOf()) { it.name }
+        val queuedEpisodeIds = queueState.value.mapTo(hashSetOf()) { it.episode.id }
         val episodesToQueue = episodes.asSequence()
             // Filter out those already downloaded.
-            .filter { provider.findEpisodeDir(it.name, it.scanlator, anime.title, source) == null }
+            .filter { episode ->
+                provider.getValidEpisodeDirNames(episode.name, episode.scanlator)
+                    .none { it in downloadedDirNames }
+            }
             // Add episodes to queue from the start.
             .sortedByDescending { it.sourceOrder }
             // Filter out those already enqueued.
-            .filter { episode -> queueState.value.none { it.episode.id == episode.id } }
+            .filter { it.id !in queuedEpisodeIds }
             // Create a download for each one.
             .map { AnimeDownload(source, anime, it, changeDownloader, video) }
             .toList()
@@ -439,10 +446,7 @@ class AnimeDownloader(
                     // If videoFile is not existing then download it
                     if (preferences.useExternalDownloader().get() == download.changeDownloader) {
                         progressJob = scope.launch {
-                            while (download.status == AnimeDownload.State.DOWNLOADING) {
-                                delay(50)
-                                notifier.onProgressChange(download)
-                            }
+                            download.progressFlow.collect { notifier.onProgressChange(download) }
                         }
 
                         downloadVideo(download, tmpDir, filename)
@@ -804,40 +808,8 @@ class AnimeDownloader(
         download: AnimeDownload,
         tmpDir: UniFile,
     ): Boolean {
-        val downloadedVideo = tmpDir.listFiles().orEmpty().filterNot { it.extension == ".tmp" }
+        val downloadedVideo = tmpDir.listFiles().orEmpty().filterNot { it.extension == "tmp" }
         return downloadedVideo.size == 1
-    }
-
-    /**
-     * Checks if the download was successful.
-     *
-     * @param download the download to check.
-     * @param animeDir the anime directory of the download.
-     * @param tmpDir the directory where the download is currently stored.
-     * @param dirname the real (non temporary) directory name of the download.
-     */
-    private suspend fun ensureSuccessfulAnimeDownload(
-        download: AnimeDownload,
-        animeDir: UniFile,
-        tmpDir: UniFile,
-        dirname: String,
-    ) {
-        // Ensure that the episode folder has the full video
-        val downloadedVideo = tmpDir.listFiles().orEmpty().filterNot { it.extension == ".tmp" }
-
-        download.status = if (downloadedVideo.size == 1) {
-            // Only rename the directory if it's downloaded
-            val filename = DiskUtil.buildValidFilename("${download.anime.title} - ${download.episode.name}")
-            tmpDir.findFile("${filename}_tmp.mkv")?.delete()
-            tmpDir.renameTo(dirname)
-
-            cache.addEpisode(dirname, animeDir, download.anime)
-
-            DiskUtil.createNoMediaFile(tmpDir, context)
-            AnimeDownload.State.DOWNLOADED
-        } else {
-            throw Exception("Unable to finalize download")
-        }
     }
 
     /**

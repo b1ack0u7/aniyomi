@@ -22,7 +22,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
@@ -49,7 +48,6 @@ import okio.buffer
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNow
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
@@ -129,9 +127,9 @@ class MangaDownloader(
     var isPaused: Boolean = false
 
     init {
-        launchNow {
-            val chapters = async { store.restore() }
-            addAllToQueue(chapters.await())
+        // Restoring hits the database once per queued manga, so keep it off the main thread
+        scope.launchIO {
+            addAllToQueue(store.restore())
         }
     }
 
@@ -216,7 +214,7 @@ class MangaDownloader(
                             it.status.value <= MangaDownload.State.DOWNLOADING.value
                         } // Ignore completed downloads, leave them in the queue
                         .groupBy { it.source }
-                        .toList().take(5) // Concurrently download from 5 different sources
+                        .toList().take(5)
                         .map { (_, downloads) -> downloads.first() }
                     emit(activeDownloads)
 
@@ -289,13 +287,22 @@ class MangaDownloader(
 
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val wasEmpty = queueState.value.isEmpty()
+        // Listing the manga directory once beats walking the tree per chapter, which costs a
+        // provider query per level on SAF storage.
+        val downloadedDirNames = provider.findMangaDir(manga.title, source)
+            ?.listFiles().orEmpty()
+            .mapNotNullTo(hashSetOf()) { it.name }
+        val queuedChapterIds = queueState.value.mapTo(hashSetOf()) { it.chapter.id }
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
-            .filter { provider.findChapterDir(it.name, it.scanlator, manga.title, source) == null }
+            .filter { chapter ->
+                provider.getValidChapterDirNames(chapter.name, chapter.scanlator)
+                    .none { it in downloadedDirNames }
+            }
             // Add chapters to queue from the start.
             .sortedByDescending { it.sourceOrder }
             // Filter out those already enqueued.
-            .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
+            .filter { it.id !in queuedChapterIds }
             // Create a download for each one.
             .map { MangaDownload(source, manga, it) }
             .toList()
@@ -377,10 +384,10 @@ class MangaDownloader(
                 DataSaver.NoOp
             }
 
-            // Delete all temporary (unfinished) files
-            tmpDir.listFiles()
-                ?.filter { it.extension == "tmp" }
-                ?.forEach { it.delete() }
+            // A page only ever writes its own file, so one listing here covers the whole chapter:
+            // whatever survives the temp-file cleanup came from a previous, interrupted attempt.
+            val (tmpFiles, existingImages) = tmpDir.listFiles().orEmpty().partition { it.extension == "tmp" }
+            tmpFiles.forEach { it.delete() }
 
             download.status = MangaDownload.State.DOWNLOADING
 
@@ -399,7 +406,7 @@ class MangaDownloader(
                             }
                         }
 
-                        withIOContext { getOrDownloadImage(page, download, tmpDir, dataSaver) }
+                        withIOContext { getOrDownloadImage(page, download, tmpDir, existingImages, dataSaver) }
                         emit(page)
                     }.flowOn(Dispatchers.IO)
                 }
@@ -452,6 +459,7 @@ class MangaDownloader(
         page: Page,
         download: MangaDownload,
         tmpDir: UniFile,
+        existingImages: List<UniFile>,
         dataSaver: DataSaver,
     ) {
         // If the image URL is empty, do nothing
@@ -461,17 +469,11 @@ class MangaDownloader(
 
         val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
         val filename = "%0${digitCount}d".format(Locale.ENGLISH, page.number)
-        val tmpFile = tmpDir.findFile("$filename.tmp")
-
-        // Delete temp file if it exists
-        tmpFile?.delete()
 
         // Try to find the image file
-        val imageFile = tmpDir.listFiles()?.firstOrNull {
-            it.name!!.startsWith("$filename.") ||
-                it.name!!.startsWith(
-                    "${filename}__001",
-                )
+        val imageFile = existingImages.firstOrNull {
+            val name = it.name.orEmpty()
+            name.startsWith("$filename.") || name.startsWith("${filename}__001")
         }
 
         try {
@@ -487,7 +489,7 @@ class MangaDownloader(
             }
 
             // When the page is ready, set page path, progress (just in case) and status
-            splitTallImageIfNeeded(page, tmpDir)
+            splitTallImageIfNeeded(file, filename, tmpDir)
             page.uri = file.uri
             page.progress = 100
             page.status = Page.State.READY
@@ -581,17 +583,13 @@ class MangaDownloader(
         return ImageUtil.getExtensionFromMimeType(mime) { file.openInputStream() }
     }
 
-    private fun splitTallImageIfNeeded(page: Page, tmpDir: UniFile) {
+    private fun splitTallImageIfNeeded(imageFile: UniFile, filenamePrefix: String, tmpDir: UniFile) {
         if (!downloadPreferences.splitTallImages().get()) return
 
+        // A page split by a previous attempt keeps the "<prefix>__NNN" naming, so leave it alone
+        if (imageFile.name.orEmpty().startsWith("${filenamePrefix}__")) return
+
         try {
-            val filenamePrefix = "%03d".format(Locale.ENGLISH, page.number)
-            val imageFile = tmpDir.listFiles()?.firstOrNull { it.name.orEmpty().startsWith(filenamePrefix) }
-                ?: error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
-
-            // If the original page was previously split, then skip
-            if (imageFile.name.orEmpty().startsWith("${filenamePrefix}__")) return
-
             ImageUtil.splitTallImage(tmpDir, imageFile, filenamePrefix)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to split downloaded image" }
