@@ -24,6 +24,8 @@ import eu.kanade.domain.items.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.items.chapter.model.toSChapter
 import eu.kanade.tachiyomi.data.cache.MangaCoverCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
+import eu.kanade.tachiyomi.data.library.LibraryUpdateProgress
+import eu.kanade.tachiyomi.data.library.LibraryUpdateSummary
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
@@ -31,12 +33,21 @@ import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.isRunning
+import eu.kanade.tachiyomi.util.system.isRunningFlow
 import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
@@ -116,8 +127,6 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
             logcat(LogPriority.ERROR, e) { "Not allowed to set foreground job" }
         }
 
-        libraryPreferences.lastUpdatedTimestamp().set(Instant.now().toEpochMilli())
-
         val categoryId = inputData.getLong(KEY_CATEGORY, -1L)
         addMangaToQueue(categoryId)
 
@@ -134,6 +143,10 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
                     Result.failure()
                 }
             } finally {
+                progressChannel.value = null
+                // Stamped on the way out so the "last updated" line doesn't report a time while
+                // the update is still running
+                libraryPreferences.lastUpdatedTimestamp().set(Instant.now().toEpochMilli())
                 notifier.cancelProgressNotification()
             }
         }
@@ -257,6 +270,7 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         val failedUpdates = CopyOnWriteArrayList<Pair<Manga, String?>>()
         val hasDownloads = AtomicBoolean(false)
         val fetchWindow = mangaFetchInterval.getWindow(ZonedDateTime.now())
+        progressChannel.value = LibraryUpdateProgress(current = 0, total = mangaToUpdate.size)
 
         coroutineScope {
             mangaToUpdate.groupBy { it.manga.source }.values
@@ -330,6 +344,13 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
                 errorFile.getUriCompat(context),
             )
         }
+
+        summaryChannel.tryEmit(
+            LibraryUpdateSummary(
+                newItems = newUpdates.sumOf { it.second.size },
+                failed = failedUpdates.size,
+            ),
+        )
     }
 
     private fun downloadChapters(manga: Manga, chapters: List<Chapter>) {
@@ -381,6 +402,7 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         ensureActive()
 
         updatingManga.add(manga)
+        progressChannel.value = LibraryUpdateProgress(completed.get(), mangaToUpdate.size, manga.title)
         notifier.showProgressNotification(
             updatingManga,
             completed.get(),
@@ -393,6 +415,11 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
 
         updatingManga.remove(manga)
         completed.getAndIncrement()
+        progressChannel.value = LibraryUpdateProgress(
+            completed.get(),
+            mangaToUpdate.size,
+            updatingManga.firstOrNull()?.title,
+        )
         notifier.showProgressNotification(
             updatingManga,
             completed.get(),
@@ -438,12 +465,31 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         private const val WORK_NAME_MANUAL = "LibraryUpdate-manual"
 
         private const val ERROR_LOG_HELP_URL = "https://aniyomi.org/help/guides/troubleshooting"
-        private const val MANGA_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 60
 
         /**
          * Key for category to update.
          */
         private const val KEY_CATEGORY = "category"
+
+        private val progressChannel = MutableStateFlow<LibraryUpdateProgress?>(null)
+
+        /**
+         * Non-null while a run is in progress, so screens can show how far along it is.
+         */
+        val progress: StateFlow<LibraryUpdateProgress?> = progressChannel.asStateFlow()
+
+        private val summaryChannel = MutableSharedFlow<LibraryUpdateSummary>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+        /**
+         * Emits once per finished run, so screens can report the outcome without depending on
+         * notifications being permitted.
+         */
+        val summaries: SharedFlow<LibraryUpdateSummary> = summaryChannel.asSharedFlow()
+
+        fun isRunningFlow(context: Context): Flow<Boolean> = context.workManager.isRunningFlow(TAG)
 
         fun cancelAllWorks(context: Context) {
             context.workManager.cancelAllWorkByTag(TAG)
