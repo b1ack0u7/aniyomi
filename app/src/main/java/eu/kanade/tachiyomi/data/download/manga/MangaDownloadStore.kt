@@ -4,13 +4,13 @@ import android.content.Context
 import androidx.core.content.edit
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.domain.entries.manga.interactor.GetManga
 import tachiyomi.domain.entries.manga.model.Manga
-import tachiyomi.domain.items.chapter.interactor.GetChapter
+import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.source.manga.service.MangaSourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -23,7 +23,7 @@ class MangaDownloadStore(
     private val sourceManager: MangaSourceManager = Injekt.get(),
     private val json: Json = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
-    private val getChapter: GetChapter = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
 ) {
 
     /**
@@ -88,9 +88,9 @@ class MangaDownloadStore(
     }
 
     /**
-     * Returns the list of downloads to restore. It should be called in a background thread.
+     * Returns the list of downloads to restore.
      */
-    fun restore(): List<MangaDownload> {
+    suspend fun restore(): List<MangaDownload> {
         val objs = preferences.all
             .mapNotNull { it.value as? String }
             .mapNotNull { deserialize(it) }
@@ -99,12 +99,15 @@ class MangaDownloadStore(
         val downloads = mutableListOf<MangaDownload>()
         if (objs.isNotEmpty()) {
             val cachedManga = mutableMapOf<Long, Manga?>()
+            val cachedChapters = mutableMapOf<Long, Map<Long, Chapter>>()
             for ((mangaId, chapterId) in objs) {
-                val manga = cachedManga.getOrPut(mangaId) {
-                    runBlocking { getManga.await(mangaId) }
-                } ?: continue
+                val manga = cachedManga.getOrPut(mangaId) { getManga.await(mangaId) } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
-                val chapter = runBlocking { getChapter.await(chapterId) } ?: continue
+                // One query per manga rather than one per queued chapter
+                val chapters = cachedChapters.getOrPut(mangaId) {
+                    getChaptersByMangaId.await(mangaId).associateBy(Chapter::id)
+                }
+                val chapter = chapters[chapterId] ?: continue
                 downloads.add(MangaDownload(source, manga, chapter))
             }
         }
