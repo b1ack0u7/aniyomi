@@ -68,4 +68,12 @@
         <item quantity="one">Show %d episode</item>
         <item quantity="other">Show all %d episodes</item>
     </plurals>
+    <plurals name="library_update_summary_chapters">
+        <item quantity="one">Library updated, %d new chapter</item>
+        <item quantity="other">Library updated, %d new chapters</item>
+    </plurals>
+    <plurals name="library_update_summary_episodes">
+        <item quantity="one">Library updated, %d new episode</item>
+        <item quantity="other">Library updated, %d new episodes</item>
+    </plurals>
 </resources>

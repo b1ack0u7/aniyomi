@@ -85,4 +85,14 @@
         <item quantity="many">Mostrar todos los %d episodios</item>
         <item quantity="other">Mostrar todos los %d episodios</item>
     </plurals>
+    <plurals name="library_update_summary_chapters">
+        <item quantity="one">Biblioteca actualizada, %d capítulo nuevo</item>
+        <item quantity="many">Biblioteca actualizada, %d capítulos nuevos</item>
+        <item quantity="other">Biblioteca actualizada, %d capítulos nuevos</item>
+    </plurals>
+    <plurals name="library_update_summary_episodes">
+        <item quantity="one">Biblioteca actualizada, %d episodio nuevo</item>
+        <item quantity="many">Biblioteca actualizada, %d episodios nuevos</item>
+        <item quantity="other">Biblioteca actualizada, %d episodios nuevos</item>
+    </plurals>
 </resources>

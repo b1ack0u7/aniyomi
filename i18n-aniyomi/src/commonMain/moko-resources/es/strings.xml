@@ -565,6 +565,7 @@
     <string name="similar_titles_see_all">Ver todos</string>
     <string name="similar_titles_empty">No se encontraron títulos similares para esta entrada.</string>
     <string name="similar_titles_error">No se pudieron cargar los títulos similares.</string>
+    <string name="similar_titles_end">No hay más sugerencias</string>
     <string name="pref_entry_suggestions">Sugerencias</string>
     <string name="pref_entry_suggestions_summary">Muestra títulos similares o recomendados según lo que estés leyendo o viendo. Con tecnología de AniList, MyAnimeList y MangaUpdates.</string>
     <string name="pref_category_title_screens">Pantallas de entrada</string>
@@ -573,4 +574,8 @@
     <string name="pref_always_show_full_episode_list_summary">Expande por completo la lista de episodios y oculta el botón «Mostrar todos los episodios»</string>
     <string name="pref_always_show_full_chapter_list">Mostrar siempre todos los capítulos (manga)</string>
     <string name="pref_always_show_full_chapter_list_summary">Expande por completo la lista de capítulos y oculta el botón «Mostrar todos los capítulos»</string>
+    <string name="library_update_progress">Actualizando biblioteca… %1$d / %2$d</string>
+    <string name="library_update_progress_entry">Actualizando biblioteca… %1$d / %2$d: %3$s</string>
+    <string name="library_update_summary_no_chapters">Biblioteca actualizada, sin capítulos nuevos</string>
+    <string name="library_update_summary_no_episodes">Biblioteca actualizada, sin episodios nuevos</string>
 </resources>
