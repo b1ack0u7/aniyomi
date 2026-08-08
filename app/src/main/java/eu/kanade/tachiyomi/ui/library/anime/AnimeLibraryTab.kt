@@ -39,6 +39,7 @@ import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.library.anime.AnimeLibraryUpdateJob
+import eu.kanade.tachiyomi.data.library.anime.toAnimeMessage
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoriesTab
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreen
@@ -101,6 +102,17 @@ data object AnimeLibraryTab : Tab {
         val state by screenModel.state.collectAsState()
 
         val snackbarHostState = remember { SnackbarHostState() }
+
+        val isUpdating by AnimeLibraryUpdateJob.isRunningFlow(context).collectAsState(initial = false)
+        val updateProgress by AnimeLibraryUpdateJob.progress.collectAsState()
+
+        LaunchedEffect(Unit) {
+            AnimeLibraryUpdateJob.summaries.collect {
+                // Replaces the "updating" message instead of queueing behind it
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(it.toAnimeMessage(context))
+            }
+        }
 
         val onClickRefresh: (Category?) -> Boolean = { category ->
             val started = AnimeLibraryUpdateJob.startNow(context, category)
@@ -215,6 +227,8 @@ data object AnimeLibraryTab : Tab {
                             screenModel.toggleRangeSelection(it)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
+                        isRefreshing = isUpdating,
+                        updateProgress = updateProgress,
                         onRefresh = onClickRefresh,
                         onGlobalSearchClicked = {
                             navigator.push(

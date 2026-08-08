@@ -6,25 +6,25 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import eu.kanade.core.preference.PreferenceMutableState
+import eu.kanade.presentation.components.AnimatedLibraryUpdateProgressIndicator
 import eu.kanade.presentation.library.components.LibraryTabs
+import eu.kanade.tachiyomi.data.library.LibraryUpdateProgress
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryItem
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.anime.LibraryAnime
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.presentation.core.components.material.PullRefresh
-import kotlin.time.Duration.Companion.seconds
+import tachiyomi.presentation.core.components.material.padding
 
 @Composable
 fun AnimeLibraryContent(
@@ -40,6 +40,8 @@ fun AnimeLibraryContent(
     onContinueWatchingClicked: ((LibraryAnime) -> Unit)?,
     onToggleSelection: (LibraryAnime) -> Unit,
     onToggleRangeSelection: (LibraryAnime) -> Unit,
+    isRefreshing: Boolean,
+    updateProgress: LibraryUpdateProgress?,
     onRefresh: (Category?) -> Boolean,
     onGlobalSearchClicked: () -> Unit,
     getNumberOfAnimeForCategory: (Category) -> Int?,
@@ -58,7 +60,6 @@ fun AnimeLibraryContent(
         val pagerState = rememberPagerState(coercedCurrentPage) { categories.size }
 
         val scope = rememberCoroutineScope()
-        var isRefreshing by remember(pagerState.currentPage) { mutableStateOf(false) }
 
         if (showPageTabs && categories.size > 1) {
             LaunchedEffect(categories) {
@@ -73,6 +74,14 @@ fun AnimeLibraryContent(
             ) { scope.launch { pagerState.animateScrollToPage(it) } }
         }
 
+        AnimatedLibraryUpdateProgressIndicator(
+            progress = updateProgress,
+            modifier = Modifier.padding(
+                horizontal = MaterialTheme.padding.medium,
+                vertical = MaterialTheme.padding.small,
+            ),
+        )
+
         val notSelectionMode = selection.isEmpty()
         val onClickAnime = { anime: LibraryAnime ->
             if (notSelectionMode) {
@@ -84,17 +93,9 @@ fun AnimeLibraryContent(
 
         PullRefresh(
             refreshing = isRefreshing,
-            onRefresh = {
-                val started = onRefresh(categories[currentPage()])
-                if (!started) return@PullRefresh
-                scope.launch {
-                    // Fake refresh status but hide it after a second as it's a long running task
-                    isRefreshing = true
-                    delay(1.seconds)
-                    isRefreshing = false
-                }
-            },
+            onRefresh = { onRefresh(categories[currentPage()]) },
             enabled = notSelectionMode,
+            showRefreshingIndicator = false,
         ) {
             AnimeLibraryPager(
                 state = pagerState,

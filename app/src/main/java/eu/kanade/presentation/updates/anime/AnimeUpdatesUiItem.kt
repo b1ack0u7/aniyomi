@@ -1,7 +1,6 @@
 package eu.kanade.presentation.updates.anime
 
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +32,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.components.LibraryUpdateProgressIndicator
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.entries.anime.components.EpisodeDownloadAction
 import eu.kanade.presentation.entries.anime.components.EpisodeDownloadIndicator
@@ -41,6 +41,7 @@ import eu.kanade.presentation.entries.components.ItemCover
 import eu.kanade.presentation.util.animateItemFastScroll
 import eu.kanade.presentation.util.relativeTimeSpanString
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateProgress
 import eu.kanade.tachiyomi.ui.updates.anime.AnimeUpdatesItem
 import tachiyomi.domain.updates.anime.model.AnimeUpdatesWithRelations
 import tachiyomi.i18n.MR
@@ -54,19 +55,23 @@ import java.util.concurrent.TimeUnit
 
 internal fun LazyListScope.animeUpdatesLastUpdatedItem(
     lastUpdated: Long,
+    updateProgress: LibraryUpdateProgress?,
 ) {
     item(key = "animeUpdates-lastUpdated") {
-        Box(
-            modifier = Modifier
-                .animateItem(fadeInSpec = null, fadeOutSpec = null)
-                .padding(
-                    horizontal = MaterialTheme.padding.medium,
-                    vertical = MaterialTheme.padding.small,
-                ),
-        ) {
+        val modifier = Modifier
+            .animateItem(fadeInSpec = null, fadeOutSpec = null)
+            .padding(
+                horizontal = MaterialTheme.padding.medium,
+                vertical = MaterialTheme.padding.small,
+            )
+
+        if (updateProgress != null && updateProgress.total > 0) {
+            LibraryUpdateProgressIndicator(progress = updateProgress, modifier = modifier)
+        } else {
             Text(
                 text = stringResource(MR.strings.updates_last_update_info, relativeTimeSpanString(lastUpdated)),
                 fontStyle = FontStyle.Italic,
+                modifier = modifier,
             )
         }
     }

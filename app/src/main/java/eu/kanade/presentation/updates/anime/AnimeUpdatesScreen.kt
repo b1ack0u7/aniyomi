@@ -1,27 +1,25 @@
 package eu.kanade.presentation.updates.anime
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import eu.kanade.presentation.entries.anime.components.EpisodeDownloadAction
 import eu.kanade.presentation.entries.components.EntryBottomActionMenu
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateProgress
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.updates.anime.AnimeUpdatesItem
 import eu.kanade.tachiyomi.ui.updates.anime.AnimeUpdatesScreenModel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.material.PullRefresh
@@ -31,13 +29,14 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.LocalDate
-import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun AnimeUpdateScreen(
     state: AnimeUpdatesScreenModel.State,
     snackbarHostState: SnackbarHostState,
     lastUpdated: Long,
+    isRefreshing: Boolean,
+    updateProgress: LibraryUpdateProgress?,
     onClickCover: (AnimeUpdatesItem) -> Unit,
     onSelectAll: (Boolean) -> Unit,
     onInvertSelection: () -> Unit,
@@ -65,6 +64,9 @@ fun AnimeUpdateScreen(
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        // The tabbed screen above already covers the top inset, so consuming it here would only add a gap
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets
+            .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
     ) { contentPadding ->
         when {
             state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
@@ -73,28 +75,17 @@ fun AnimeUpdateScreen(
                 modifier = Modifier.padding(contentPadding),
             )
             else -> {
-                val scope = rememberCoroutineScope()
-                var isRefreshing by remember { mutableStateOf(false) }
-
                 PullRefresh(
                     refreshing = isRefreshing,
-                    onRefresh = {
-                        val started = onUpdateLibrary()
-                        if (!started) return@PullRefresh
-                        scope.launch {
-                            // Fake refresh status but hide it after a second as it's a long running task
-                            isRefreshing = true
-                            delay(1.seconds)
-                            isRefreshing = false
-                        }
-                    },
+                    onRefresh = { onUpdateLibrary() },
                     enabled = !state.selectionMode,
                     indicatorPadding = contentPadding,
+                    showRefreshingIndicator = false,
                 ) {
                     FastScrollLazyColumn(
                         contentPadding = contentPadding,
                     ) {
-                        animeUpdatesLastUpdatedItem(lastUpdated)
+                        animeUpdatesLastUpdatedItem(lastUpdated, updateProgress)
 
                         animeUpdatesUiItems(
                             uiModels = state.getUiModel(),

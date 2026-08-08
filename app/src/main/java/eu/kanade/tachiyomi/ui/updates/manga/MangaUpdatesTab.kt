@@ -20,6 +20,8 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.updates.UpdatesDeleteConfirmationDialog
 import eu.kanade.presentation.updates.manga.MangaUpdateScreen
+import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateJob
+import eu.kanade.tachiyomi.data.library.manga.toMangaMessage
 import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -42,6 +44,17 @@ fun Screen.mangaUpdatesTab(
     val screenModel = rememberScreenModel { MangaUpdatesScreenModel() }
     val state by screenModel.state.collectAsState()
 
+    val isUpdating by MangaLibraryUpdateJob.isRunningFlow(context).collectAsState(initial = false)
+    val updateProgress by MangaLibraryUpdateJob.progress.collectAsState()
+
+    LaunchedEffect(Unit) {
+        MangaLibraryUpdateJob.summaries.collect {
+            // Replaces the "updating" message instead of queueing behind it
+            screenModel.snackbarHostState.currentSnackbarData?.dismiss()
+            screenModel.snackbarHostState.showSnackbar(it.toMangaMessage(context))
+        }
+    }
+
     val scope = rememberCoroutineScope()
     val navigateUp: (() -> Unit)? = if (fromMore) {
         {
@@ -63,6 +76,8 @@ fun Screen.mangaUpdatesTab(
                 state = state,
                 snackbarHostState = screenModel.snackbarHostState,
                 lastUpdated = screenModel.lastUpdated,
+                isRefreshing = isUpdating,
+                updateProgress = updateProgress,
                 onClickCover = { item -> navigator.push(MangaScreen(item.update.mangaId)) },
                 onSelectAll = screenModel::toggleAllSelection,
                 onInvertSelection = screenModel::invertSelection,
