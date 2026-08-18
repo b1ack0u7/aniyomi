@@ -51,6 +51,10 @@
 
 ##---------------Begin: proguard configuration for okhttp  ----------
 -keepclasseswithmembers class okhttp3.MultipartBody$Builder { *; }
+
+# okhttp-zstd resolves these via JNI FindClass in libzstd-kmp.so; R8 can't see the reference and strips them,
+# aborting the process when a source responds with Content-Encoding: zstd.
+-keep class com.squareup.zstd.** { *; }
 ##---------------End: proguard configuration for okhttp  ----------
 
 ##---------------Begin: proguard configuration for kotlinx.serialization  ----------
