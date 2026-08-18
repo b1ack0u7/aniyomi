@@ -51,6 +51,10 @@ import tachiyomi.domain.category.anime.interactor.GetAnimeCategories
 import tachiyomi.domain.category.anime.interactor.SetAnimeCategories
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.model.AnimeUpdate
+import tachiyomi.domain.history.anime.interactor.GetAnimeHistory
+import tachiyomi.domain.history.anime.interactor.RemoveAnimeHistory
+import tachiyomi.domain.history.anime.interactor.UpsertAnimeHistory
+import tachiyomi.domain.history.anime.model.AnimeHistoryUpdate
 import tachiyomi.domain.items.episode.interactor.GetEpisodesByAnimeId
 import tachiyomi.domain.items.episode.interactor.UpdateEpisode
 import tachiyomi.domain.items.episode.model.toEpisodeUpdate
@@ -209,6 +213,9 @@ internal class MigrateAnimeDialogScreenModel(
     private val setAnimeCategories: SetAnimeCategories = Injekt.get(),
     private val getTracks: GetAnimeTracks = Injekt.get(),
     private val insertTrack: InsertAnimeTrack = Injekt.get(),
+    private val getHistory: GetAnimeHistory = Injekt.get(),
+    private val upsertHistory: UpsertAnimeHistory = Injekt.get(),
+    private val removeHistory: RemoveAnimeHistory = Injekt.get(),
     private val coverCache: AnimeCoverCache = Injekt.get(),
     private val backgroundCache: AnimeBackgroundCache = Injekt.get(),
     private val preferenceStore: PreferenceStore = Injekt.get(),
@@ -306,6 +313,29 @@ internal class MigrateAnimeDialogScreenModel(
 
             val episodeUpdates = updatedAnimeEpisodes.map { it.toEpisodeUpdate() }
             updateEpisode.awaitAll(episodeUpdates)
+
+            // On replace, move seen history onto the matching new episodes and drop the old
+            // entry's history so migration doesn't leave a duplicate in the history tab
+            if (replace) {
+                val episodeNumberByOldId = prevAnimeEpisodes.associate { it.id to it.episodeNumber }
+                val newEpisodeIdByNumber = animeEpisodes
+                    .filter { it.isRecognizedNumber }
+                    .associate { it.episodeNumber to it.id }
+
+                getHistory.await(oldAnime.id).forEach { history ->
+                    val seenAt = history.seenAt ?: return@forEach
+                    val episodeNumber = episodeNumberByOldId[history.episodeId] ?: return@forEach
+                    val newEpisodeId = newEpisodeIdByNumber[episodeNumber] ?: return@forEach
+                    upsertHistory.await(
+                        AnimeHistoryUpdate(
+                            episodeId = newEpisodeId,
+                            seenAt = seenAt,
+                        ),
+                    )
+                }
+
+                removeHistory.awaitDelete(oldAnime.id)
+            }
         }
 
         // Update categories

@@ -18,4 +18,8 @@ class RemoveMangaHistory(
     suspend fun await(mangaId: Long) {
         repository.resetHistoryByMangaId(mangaId)
     }
+
+    suspend fun awaitDelete(mangaId: Long) {
+        repository.deleteHistoryByMangaId(mangaId)
+    }
 }

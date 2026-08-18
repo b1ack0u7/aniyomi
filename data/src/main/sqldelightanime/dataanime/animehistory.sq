@@ -48,6 +48,18 @@ WHERE _id IN (
     WHERE M._id = :animeId
 );
 
+deleteHistoryByAnimeId:
+DELETE FROM animehistory
+WHERE _id IN (
+    SELECT H._id
+    FROM animes M
+    INNER JOIN episodes EP
+    ON M._id = EP.anime_id
+    INNER JOIN animehistory H
+    ON EP._id = H.episode_id
+    WHERE M._id = :animeId
+);
+
 removeAllHistory:
 DELETE FROM animehistory;
 

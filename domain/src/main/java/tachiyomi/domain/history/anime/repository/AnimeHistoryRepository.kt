@@ -17,6 +17,8 @@ interface AnimeHistoryRepository {
 
     suspend fun resetHistoryByAnimeId(animeId: Long)
 
+    suspend fun deleteHistoryByAnimeId(animeId: Long)
+
     suspend fun deleteAllAnimeHistory(): Boolean
 
     suspend fun upsertAnimeHistory(historyUpdate: AnimeHistoryUpdate)
