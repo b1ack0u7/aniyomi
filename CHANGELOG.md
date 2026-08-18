@@ -11,6 +11,8 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+
+## [v0.22.0] - 2026-08-18
 ### Improved
 
 - Carry reading/watching history over when migrating an entry, moving it onto the matching chapters/episodes of the new source and dropping the old entry's history so it no longer lingers as a duplicate in the History tab ([@b1ack0u7](https://github.com/b1ack0u7))
