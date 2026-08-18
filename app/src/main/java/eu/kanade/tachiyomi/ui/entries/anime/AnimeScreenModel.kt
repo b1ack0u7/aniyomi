@@ -5,6 +5,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Immutable
+import androidx.compose.ui.util.fastAny
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import aniyomi.core.common.torrent.TorrentPreferences
@@ -1555,7 +1556,9 @@ class AnimeScreenModel(
         fromLongPress: Boolean = false,
     ) {
         updateSuccessState { successState ->
-            val newEpisodes = successState.processedEpisodes.toMutableList().apply {
+            // Range/position math needs the visible (processed) list, but the flags are written
+            // back onto the raw list so an active filter doesn't drop hidden episodes from state.
+            successState.processedEpisodes.toMutableList().apply {
                 val selectedIndex = successState.processedEpisodes.indexOfFirst { it.id == item.episode.id }
                 if (selectedIndex < 0) return@apply
 
@@ -1608,7 +1611,9 @@ class AnimeScreenModel(
                     }
                 }
             }
-            successState.copy(episodes = newEpisodes)
+            successState.copy(
+                episodes = successState.episodes.map { it.copy(selected = it.id in selectedEpisodeIds) },
+            )
         }
     }
 
@@ -1780,6 +1785,10 @@ class AnimeScreenModel(
 
             val processedEpisodes by lazy {
                 episodes.applyFilters(anime).toList()
+            }
+
+            val isAnySelected by lazy {
+                episodes.fastAny { it.selected }
             }
 
             val episodeListItems by lazy {

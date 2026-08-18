@@ -368,21 +368,15 @@ private fun AnimeScreenSmallImpl(
 
     var toolbarHeight by remember { mutableIntStateOf(0) }
 
-    val isAnySelected by remember {
-        derivedStateOf {
-            episodes.fastAny { it.selected }
-        }
-    }
+    val isAnySelected = remember(state) { state.isAnySelected }
 
     val fullListPreference = remember { Injekt.get<UiPreferences>().alwaysShowFullEpisodeList() }
     val alwaysShowFullList by fullListPreference.changes()
         .collectAsState(initial = fullListPreference.get())
     var listExpanded by rememberSaveable(alwaysShowFullList) { mutableStateOf(alwaysShowFullList) }
     // Entering selection mode opens the list: range/select-all reach episodes the collapsed
-    // list is hiding. Not reusing `isAnySelected` — its keyless `remember` holds on to the
-    // episode list from the first composition.
-    val hasSelection = episodes.fastAny { it.selected }
-    LaunchedEffect(hasSelection) { if (hasSelection) listExpanded = true }
+    // list is hiding.
+    LaunchedEffect(isAnySelected) { if (isAnySelected) listExpanded = true }
     // Seasons are their own short grid; only the episode list is worth collapsing.
     val isCollapsible = !alwaysShowFullList &&
         state.anime.fetchType == FetchType.Episodes &&
@@ -510,6 +504,8 @@ private fun AnimeScreenSmallImpl(
                     modifier = Modifier.fillMaxHeight(),
                     state = itemListState,
                     columns = if (gridSize == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(gridSize),
+                    topContentPadding = topPadding,
+                    endContentPadding = contentPadding.calculateEndPadding(layoutDirection),
                     contentPadding = PaddingValues(
                         start = GRID_PADDING + contentPadding.calculateStartPadding(layoutDirection),
                         end = GRID_PADDING + contentPadding.calculateEndPadding(layoutDirection),
@@ -759,21 +755,15 @@ fun AnimeScreenLargeImpl(
     val episodes = remember(state) { state.processedEpisodes }
     val listItem = remember(state) { state.episodeListItems }
 
-    val isAnySelected by remember {
-        derivedStateOf {
-            episodes.fastAny { it.selected }
-        }
-    }
+    val isAnySelected = remember(state) { state.isAnySelected }
 
     val fullListPreference = remember { Injekt.get<UiPreferences>().alwaysShowFullEpisodeList() }
     val alwaysShowFullList by fullListPreference.changes()
         .collectAsState(initial = fullListPreference.get())
     var listExpanded by rememberSaveable(alwaysShowFullList) { mutableStateOf(alwaysShowFullList) }
     // Entering selection mode opens the list: range/select-all reach episodes the collapsed
-    // list is hiding. Not reusing `isAnySelected` — its keyless `remember` holds on to the
-    // episode list from the first composition.
-    val hasSelection = episodes.fastAny { it.selected }
-    LaunchedEffect(hasSelection) { if (hasSelection) listExpanded = true }
+    // list is hiding.
+    LaunchedEffect(isAnySelected) { if (isAnySelected) listExpanded = true }
     // Seasons are their own short grid; only the episode list is worth collapsing.
     val isCollapsible = !alwaysShowFullList &&
         state.anime.fetchType == FetchType.Episodes &&
@@ -950,6 +940,7 @@ fun AnimeScreenLargeImpl(
                             modifier = Modifier.fillMaxHeight(),
                             state = itemListState,
                             columns = if (gridSize == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(gridSize),
+                            topContentPadding = contentPadding.calculateTopPadding(),
                             contentPadding = PaddingValues(
                                 start = GRID_PADDING,
                                 end = GRID_PADDING,

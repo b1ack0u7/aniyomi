@@ -41,6 +41,10 @@ import tachiyomi.domain.category.manga.interactor.GetMangaCategories
 import tachiyomi.domain.category.manga.interactor.SetMangaCategories
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.entries.manga.model.MangaUpdate
+import tachiyomi.domain.history.manga.interactor.GetMangaHistory
+import tachiyomi.domain.history.manga.interactor.RemoveMangaHistory
+import tachiyomi.domain.history.manga.interactor.UpsertMangaHistory
+import tachiyomi.domain.history.manga.model.MangaHistoryUpdate
 import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.items.chapter.interactor.UpdateChapter
 import tachiyomi.domain.items.chapter.model.toChapterUpdate
@@ -159,6 +163,9 @@ internal class MigrateMangaDialogScreenModel(
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val getTracks: GetMangaTracks = Injekt.get(),
     private val insertTrack: InsertMangaTrack = Injekt.get(),
+    private val getHistory: GetMangaHistory = Injekt.get(),
+    private val upsertHistory: UpsertMangaHistory = Injekt.get(),
+    private val removeHistory: RemoveMangaHistory = Injekt.get(),
     private val coverCache: MangaCoverCache = Injekt.get(),
     private val preferenceStore: PreferenceStore = Injekt.get(),
 ) : StateScreenModel<MigrateMangaDialogScreenModel.State>(State()) {
@@ -259,6 +266,30 @@ internal class MigrateMangaDialogScreenModel(
 
             val chapterUpdates = updatedMangaChapters.map { it.toChapterUpdate() }
             updateChapter.awaitAll(chapterUpdates)
+
+            // On replace, move read history onto the matching new chapters and drop the old
+            // entry's history so migration doesn't leave a duplicate in the history tab
+            if (replace) {
+                val chapterNumberByOldId = prevMangaChapters.associate { it.id to it.chapterNumber }
+                val newChapterIdByNumber = mangaChapters
+                    .filter { it.isRecognizedNumber }
+                    .associate { it.chapterNumber to it.id }
+
+                getHistory.await(oldManga.id).forEach { history ->
+                    val readAt = history.readAt ?: return@forEach
+                    val chapterNumber = chapterNumberByOldId[history.chapterId] ?: return@forEach
+                    val newChapterId = newChapterIdByNumber[chapterNumber] ?: return@forEach
+                    upsertHistory.await(
+                        MangaHistoryUpdate(
+                            chapterId = newChapterId,
+                            readAt = readAt,
+                            sessionReadDuration = history.readDuration,
+                        ),
+                    )
+                }
+
+                removeHistory.awaitDelete(oldManga.id)
+            }
         }
 
         // Update categories

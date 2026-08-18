@@ -153,3 +153,15 @@ Comments in this repo have drifted into essays. **Default to no comment.** Names
 **Exception:** `:source-api` is public API that extension developers compile against — KDoc on its public types and members is expected and stays. Keep it factual and short; the rules above still apply everywhere else, including the rest of `:domain`, `:data`, and `:app`.
 
 **When editing existing code**, trim comments you pass through that already break these rules; don't preserve them out of politeness.
+
+```ts
+// ❌ 5 lines of prose for a 2-line function, plus a rationale essay on the type
+// The ONE place the node segment is prepended. Both the axios call and the MSW
+// intercept pattern go through here, so the two can never spell a node
+// differently.
+export const endpointPath = ({ node, path }: ApiEndpoint): string => …
+
+// ✅ the constraint only, once
+// Single source for the node prefix so axios and MSW can't spell it differently.
+export const endpointPath = ({ node, path }: ApiEndpoint): string => …
+```

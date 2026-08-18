@@ -50,6 +50,14 @@ class AnimeHistoryRepositoryImpl(
         }
     }
 
+    override suspend fun deleteHistoryByAnimeId(animeId: Long) {
+        try {
+            handler.await { animehistoryQueries.deleteHistoryByAnimeId(animeId) }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, throwable = e)
+        }
+    }
+
     override suspend fun deleteAllAnimeHistory(): Boolean {
         return try {
             handler.await { animehistoryQueries.removeAllHistory() }

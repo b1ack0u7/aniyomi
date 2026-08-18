@@ -49,6 +49,14 @@ class MangaHistoryRepositoryImpl(
         }
     }
 
+    override suspend fun deleteHistoryByMangaId(mangaId: Long) {
+        try {
+            handler.await { historyQueries.deleteHistoryByMangaId(mangaId) }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, throwable = e)
+        }
+    }
+
     override suspend fun deleteAllMangaHistory(): Boolean {
         return try {
             handler.await { historyQueries.removeAllHistory() }

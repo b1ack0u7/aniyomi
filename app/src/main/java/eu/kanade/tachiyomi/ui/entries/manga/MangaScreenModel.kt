@@ -1090,7 +1090,9 @@ class MangaScreenModel(
         fromLongPress: Boolean = false,
     ) {
         updateSuccessState { successState ->
-            val newChapters = successState.processedChapters.toMutableList().apply {
+            // Range/position math needs the visible (processed) list, but the flags are written
+            // back onto the raw list so an active filter doesn't drop hidden chapters from state.
+            successState.processedChapters.toMutableList().apply {
                 val selectedIndex = successState.processedChapters.indexOfFirst { it.id == item.chapter.id }
                 if (selectedIndex < 0) return@apply
 
@@ -1143,7 +1145,9 @@ class MangaScreenModel(
                     }
                 }
             }
-            successState.copy(chapters = newChapters)
+            successState.copy(
+                chapters = successState.chapters.map { it.copy(selected = it.id in selectedChapterIds) },
+            )
         }
     }
 
