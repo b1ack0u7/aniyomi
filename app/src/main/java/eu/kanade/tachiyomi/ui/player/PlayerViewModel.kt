@@ -1288,6 +1288,7 @@ class PlayerViewModel @JvmOverloads constructor(
 
                 _currentEpisode.update { _ -> episode }
                 _currentSource.update { _ -> source }
+                episodeToDownload = cancelQueuedDownloads(episode)
 
                 updateEpisode(episode)
 
@@ -1825,6 +1826,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val chosenEpisode = currentPlaylist.value.firstOrNull { ep -> ep.id == episodeId } ?: return null
 
         _currentEpisode.update { _ -> chosenEpisode }
+        episodeToDownload = cancelQueuedDownloads(chosenEpisode)
         updateEpisode(chosenEpisode)
 
         return withIOContext {
@@ -1929,6 +1931,17 @@ class PlayerViewModel @JvmOverloads constructor(
             val episodesToDownload = getNextEpisodes.await(anime.id, nextEpisode.id!!)
                 .take(downloadAheadAmount)
             downloadManager.downloadEpisodes(anime, episodesToDownload)
+        }
+    }
+
+    /**
+     * Cancels the queued download of the episode being watched, if any, and returns it so
+     * [onCleared] can requeue it once the player closes. Avoids downloading an episode while it's
+     * being streamed.
+     */
+    private fun cancelQueuedDownloads(episode: Episode): AnimeDownload? {
+        return downloadManager.getQueuedDownloadOrNull(episode.id ?: return null)?.also {
+            downloadManager.cancelQueuedDownloads(listOf(it))
         }
     }
 
