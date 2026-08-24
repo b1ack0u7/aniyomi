@@ -619,9 +619,16 @@ class AnimeDownloader(
     }
 
     private fun getFFmpegOptions(video: Video, headerOptions: String, ffmpegFilename: String): Array<String> {
+        // Without these a dropped or half-open connection makes ffmpeg block forever with no data
+        // and no error, freezing the download. Reconnect on network errors and bail out after
+        // FFMPEG_IO_TIMEOUT_US of silence so the retry in downloadVideo can resume it.
+        val reconnectOptions = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 30 " +
+            "-rw_timeout $FFMPEG_IO_TIMEOUT_US"
+
         fun formatInputs(tracks: List<Track>) = tracks.joinToString(" ", postfix = " ") {
             buildList {
                 if (it.url.startsWith("http")) {
+                    add(reconnectOptions)
                     add(headerOptions)
                 }
                 add("-i")
@@ -654,6 +661,7 @@ class AnimeDownloader(
 
         val videoInput = buildList {
             if (video.videoUrl.startsWith("http")) {
+                add(reconnectOptions)
                 add(headerOptions)
             }
             add(sourceStreamOptions)
@@ -900,6 +908,9 @@ class AnimeDownloader(
     companion object {
         const val TMP_DIR_SUFFIX = "_tmp"
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
+
+        // ffmpeg -rw_timeout is in microseconds: 30s of no I/O before erroring out.
+        private const val FFMPEG_IO_TIMEOUT_US = 30_000_000L
         const val EPISODES_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 10
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 20
     }
