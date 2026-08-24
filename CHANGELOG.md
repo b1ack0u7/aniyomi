@@ -11,6 +11,18 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+### Added
+
+- Add per-source Retry and Open in WebView actions to sources that fail during global search, so a Cloudflare or other failure can be solved in the WebView and retried in place without losing the rest of the results, on both sides ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Improved
+
+- Cancel the queued download of an episode while it is being streamed and requeue it once the player closes, so an episode is no longer downloaded and played at the same time ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Fixed
+
+- Fix the Cloudflare bypass failing on sources that present a challenge, by detecting it through the official `cf-mitigated` header and the WebView's HTTP error callback instead of treating any 403/503 as a solvable challenge, on both sides. Ported from Mihon ([@b1ack0u7](https://github.com/b1ack0u7))
+- Fix ffmpeg-based anime downloads freezing indefinitely when the connection drops, by reconnecting on network errors and bailing out after 30 seconds of no I/O so the download retries instead of hanging ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.22.0] - 2026-08-18
 ### Improved
