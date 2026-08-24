@@ -11,6 +11,7 @@ import eu.kanade.presentation.browse.GlobalSearchResultItem
 import eu.kanade.presentation.browse.anime.components.GlobalAnimeSearchCardRow
 import eu.kanade.presentation.browse.anime.components.GlobalAnimeSearchToolbar
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.AnimeSearchItemResult
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.AnimeSearchScreenModel
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.AnimeSourceFilter
@@ -30,6 +31,8 @@ fun GlobalAnimeSearchScreen(
     onClickSource: (AnimeCatalogueSource) -> Unit,
     onClickItem: (Anime) -> Unit,
     onLongClickItem: (Anime) -> Unit,
+    onRetryClick: (AnimeCatalogueSource) -> Unit,
+    onClickWebView: (AnimeHttpSource) -> Unit,
 ) {
     Scaffold(
         topBar = { scrollBehavior ->
@@ -55,6 +58,8 @@ fun GlobalAnimeSearchScreen(
             onClickSource = onClickSource,
             onClickItem = onClickItem,
             onLongClickItem = onLongClickItem,
+            onRetryClick = onRetryClick,
+            onClickWebView = onClickWebView,
         )
     }
 }
@@ -67,6 +72,8 @@ internal fun GlobalSearchContent(
     onClickSource: (AnimeCatalogueSource) -> Unit,
     onClickItem: (Anime) -> Unit,
     onLongClickItem: (Anime) -> Unit,
+    onRetryClick: ((AnimeCatalogueSource) -> Unit)? = null,
+    onClickWebView: ((AnimeHttpSource) -> Unit)? = null,
     fromSourceId: Long? = null,
 ) {
     LazyColumn(
@@ -95,7 +102,13 @@ internal fun GlobalSearchContent(
                             )
                         }
                         is AnimeSearchItemResult.Error -> {
-                            GlobalSearchErrorResultItem(message = result.throwable.message)
+                            GlobalSearchErrorResultItem(
+                                message = result.throwable.message,
+                                onRetryClick = onRetryClick?.let { { it(source) } },
+                                onWebViewClick = (source as? AnimeHttpSource)?.let { httpSource ->
+                                    onClickWebView?.let { callback -> { callback(httpSource) } }
+                                },
+                            )
                         }
                     }
                 }

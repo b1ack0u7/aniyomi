@@ -14,6 +14,7 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -52,6 +53,8 @@ abstract class AnimeSearchScreenModel(
 
     private var lastQuery: String? = null
     private var lastSourceFilter: AnimeSourceFilter? = null
+
+    private var pendingWebViewRetrySourceId: Long? = null
 
     protected var extensionFilter: String? = null
 
@@ -156,27 +159,51 @@ abstract class AnimeSearchScreenModel(
                     if (state.value.items[source] !is AnimeSearchItemResult.Loading) {
                         return@async
                     }
-                    try {
-                        val page = withContext(coroutineDispatcher) {
-                            source.getSearchAnime(1, query, source.getFilterList())
-                        }
-
-                        val titles = page.animes.map {
-                            networkToLocalAnime.await(it.toDomainAnime(source.id))
-                        }
-
-                        if (isActive) {
-                            updateItem(source, AnimeSearchItemResult.Success(titles))
-                        }
-                    } catch (e: Exception) {
-                        if (isActive) {
-                            updateItem(source, AnimeSearchItemResult.Error(e))
-                        }
-                    }
+                    searchSource(source, query)
                 }
             }
                 .awaitAll()
         }
+    }
+
+    private suspend fun CoroutineScope.searchSource(source: AnimeCatalogueSource, query: String) {
+        try {
+            val page = withContext(coroutineDispatcher) {
+                source.getSearchAnime(1, query, source.getFilterList())
+            }
+
+            val titles = page.animes.map {
+                networkToLocalAnime.await(it.toDomainAnime(source.id))
+            }
+
+            if (isActive) {
+                updateItem(source, AnimeSearchItemResult.Success(titles))
+            }
+        } catch (e: Exception) {
+            if (isActive) {
+                updateItem(source, AnimeSearchItemResult.Error(e))
+            }
+        }
+    }
+
+    fun retrySource(source: AnimeCatalogueSource) {
+        val query = state.value.searchQuery
+        if (query.isNullOrBlank()) return
+        updateItem(source, AnimeSearchItemResult.Loading)
+        ioCoroutineScope.launch {
+            searchSource(source, query)
+        }
+    }
+
+    fun scheduleWebViewRetry(sourceId: Long) {
+        pendingWebViewRetrySourceId = sourceId
+    }
+
+    fun consumeWebViewRetry() {
+        val sourceId = pendingWebViewRetrySourceId ?: return
+        pendingWebViewRetrySourceId = null
+        val source = state.value.items.keys.find { it.id == sourceId } ?: return
+        retrySource(source)
     }
 
     private fun updateItems(items: PersistentMap<AnimeCatalogueSource, AnimeSearchItemResult>) {

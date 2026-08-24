@@ -11,6 +11,7 @@ import eu.kanade.presentation.browse.GlobalSearchResultItem
 import eu.kanade.presentation.browse.manga.components.GlobalMangaSearchCardRow
 import eu.kanade.presentation.browse.manga.components.GlobalMangaSearchToolbar
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.MangaSearchItemResult
 import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.MangaSearchScreenModel
 import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.MangaSourceFilter
@@ -30,6 +31,8 @@ fun GlobalMangaSearchScreen(
     onClickSource: (CatalogueSource) -> Unit,
     onClickItem: (Manga) -> Unit,
     onLongClickItem: (Manga) -> Unit,
+    onRetryClick: (CatalogueSource) -> Unit,
+    onClickWebView: (HttpSource) -> Unit,
 ) {
     Scaffold(
         topBar = { scrollBehavior ->
@@ -55,6 +58,8 @@ fun GlobalMangaSearchScreen(
             onClickSource = onClickSource,
             onClickItem = onClickItem,
             onLongClickItem = onLongClickItem,
+            onRetryClick = onRetryClick,
+            onClickWebView = onClickWebView,
         )
     }
 }
@@ -67,6 +72,8 @@ internal fun GlobalSearchContent(
     onClickSource: (CatalogueSource) -> Unit,
     onClickItem: (Manga) -> Unit,
     onLongClickItem: (Manga) -> Unit,
+    onRetryClick: ((CatalogueSource) -> Unit)? = null,
+    onClickWebView: ((HttpSource) -> Unit)? = null,
     fromSourceId: Long? = null,
 ) {
     LazyColumn(
@@ -95,7 +102,13 @@ internal fun GlobalSearchContent(
                             )
                         }
                         is MangaSearchItemResult.Error -> {
-                            GlobalSearchErrorResultItem(message = result.throwable.message)
+                            GlobalSearchErrorResultItem(
+                                message = result.throwable.message,
+                                onRetryClick = onRetryClick?.let { { it(source) } },
+                                onWebViewClick = (source as? HttpSource)?.let { httpSource ->
+                                    onClickWebView?.let { callback -> { callback(httpSource) } }
+                                },
+                            )
                         }
                     }
                 }

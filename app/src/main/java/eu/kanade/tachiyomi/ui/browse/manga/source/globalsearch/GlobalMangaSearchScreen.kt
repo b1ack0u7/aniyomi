@@ -15,6 +15,7 @@ import eu.kanade.presentation.browse.manga.GlobalMangaSearchScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.browse.manga.source.browse.BrowseMangaSourceScreen
 import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
+import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class GlobalMangaSearchScreen(
@@ -38,6 +39,14 @@ class GlobalMangaSearchScreen(
             )
         }
         val state by screenModel.state.collectAsState()
+
+        // Retry the source's search when returning from its WebView (e.g. after solving Cloudflare).
+        LaunchedEffect(navigator.lastItem) {
+            if (navigator.lastItem == this@GlobalMangaSearchScreen) {
+                screenModel.consumeWebViewRetry()
+            }
+        }
+
         var showSingleLoadingScreen by remember {
             mutableStateOf(
                 searchQuery.isNotEmpty() && !extensionFilter.isNullOrEmpty() && state.total == 1,
@@ -76,6 +85,17 @@ class GlobalMangaSearchScreen(
                 },
                 onClickItem = { navigator.push(MangaScreen(it.id, true)) },
                 onLongClickItem = { navigator.push(MangaScreen(it.id, true)) },
+                onRetryClick = screenModel::retrySource,
+                onClickWebView = { source ->
+                    screenModel.scheduleWebViewRetry(source.id)
+                    navigator.push(
+                        WebViewScreen(
+                            url = source.getHomeUrl(),
+                            initialTitle = source.name,
+                            sourceId = source.id,
+                        ),
+                    )
+                },
             )
         }
     }
