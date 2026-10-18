@@ -5,8 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,10 +25,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastMap
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.widget.BasePreferenceWidget
+import eu.kanade.presentation.more.settings.widget.PrefsHorizontalPadding
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -35,6 +44,7 @@ import tachiyomi.domain.category.anime.interactor.GetAnimeCategories
 import tachiyomi.domain.category.manga.interactor.GetMangaCategories
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.download.service.MangaDownloadPreset
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.components.OutlinedNumericChooser
@@ -44,6 +54,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.core.common.preference.Preference as PreferenceData
 
 object SettingsDownloadScreen : SearchableSettings {
 
@@ -104,6 +115,7 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(AYMR.strings.pref_download_slots),
             ),
             Preference.PreferenceItem.InfoPreference(stringResource(AYMR.strings.download_slots_info)),
+            getSmartMangaDownloadsGroup(downloadPreferences),
             getDeleteChaptersGroup(
                 downloadPreferences = downloadPreferences,
                 animeCategories = allAnimeCategories.toImmutableList(),
@@ -119,6 +131,202 @@ object SettingsDownloadScreen : SearchableSettings {
                 downloadPreferences = downloadPreferences,
                 basePreferences = basePreferences,
             ),
+        )
+    }
+
+    @Composable
+    private fun getSmartMangaDownloadsGroup(downloadPreferences: DownloadPreferences): Preference.PreferenceGroup {
+        val enabled by downloadPreferences.smartMangaDownloads().collectAsState()
+        val initialRetry by downloadPreferences.smartMangaRetryInitialSeconds().collectAsState()
+        return Preference.PreferenceGroup(
+            title = stringResource(AYMR.strings.smart_manga_downloads),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = downloadPreferences.smartMangaDownloads(),
+                    title = stringResource(AYMR.strings.smart_manga_downloads_enable),
+                    subtitle = stringResource(AYMR.strings.smart_manga_downloads_summary),
+                ),
+                getSmartMangaPresetPreference(downloadPreferences, enabled),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaRequestIntervalMs(),
+                    stringResource(AYMR.strings.smart_manga_request_interval),
+                    500..10000,
+                    stringResource(AYMR.strings.smart_download_milliseconds),
+                    enabled,
+                ),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaChapterDelaySeconds(),
+                    stringResource(AYMR.strings.smart_manga_chapter_delay),
+                    1..120,
+                    stringResource(AYMR.strings.smart_download_seconds),
+                    enabled,
+                ),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaBatchSize(),
+                    stringResource(AYMR.strings.smart_manga_batch_size),
+                    1..20,
+                    stringResource(AYMR.strings.smart_download_chapters),
+                    enabled,
+                ),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaBatchDelaySeconds(),
+                    stringResource(AYMR.strings.smart_manga_batch_delay),
+                    30..1800,
+                    stringResource(AYMR.strings.smart_download_seconds),
+                    enabled,
+                ),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaRetryInitialSeconds(),
+                    stringResource(AYMR.strings.smart_manga_retry_initial),
+                    60..1800,
+                    stringResource(AYMR.strings.smart_download_seconds),
+                    enabled,
+                    onValueChanged = { value ->
+                        val maximum = downloadPreferences.smartMangaRetryMaxSeconds()
+                        if (maximum.get() < value) maximum.set(value)
+                    },
+                ),
+                smartMangaNumberPreference(
+                    downloadPreferences.smartMangaRetryMaxSeconds(),
+                    stringResource(AYMR.strings.smart_manga_retry_max),
+                    maxOf(300, initialRetry.coerceIn(60, 1800))..86400,
+                    stringResource(AYMR.strings.smart_download_seconds),
+                    enabled,
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(AYMR.strings.smart_manga_restore_recommended),
+                    subtitle = stringResource(AYMR.strings.smart_manga_restore_recommended_summary),
+                    onClick = { downloadPreferences.restoreRecommendedMangaDownloads() },
+                ),
+                Preference.PreferenceItem.InfoPreference(stringResource(AYMR.strings.smart_manga_downloads_info)),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getSmartMangaPresetPreference(
+        preferences: DownloadPreferences,
+        enabled: Boolean,
+    ): Preference.PreferenceItem.CustomPreference {
+        val interval by preferences.smartMangaRequestIntervalMs().collectAsState()
+        val chapterDelay by preferences.smartMangaChapterDelaySeconds().collectAsState()
+        val batchSize by preferences.smartMangaBatchSize().collectAsState()
+        val batchDelay by preferences.smartMangaBatchDelaySeconds().collectAsState()
+        val retryInitial by preferences.smartMangaRetryInitialSeconds().collectAsState()
+        val retryMax by preferences.smartMangaRetryMaxSeconds().collectAsState()
+        val selected = MangaDownloadPreset.matching(
+            interval,
+            chapterDelay,
+            batchSize,
+            batchDelay,
+            retryInitial,
+            retryMax,
+        )
+        val title = stringResource(AYMR.strings.smart_manga_preset)
+        val labels = listOf(
+            stringResource(AYMR.strings.smart_manga_preset_fast),
+            stringResource(AYMR.strings.smart_manga_preset_default),
+            stringResource(AYMR.strings.smart_manga_preset_slow),
+        )
+        val description = stringResource(
+            when (selected) {
+                MangaDownloadPreset.FAST -> AYMR.strings.smart_manga_preset_fast_summary
+                MangaDownloadPreset.DEFAULT -> AYMR.strings.smart_manga_preset_default_summary
+                MangaDownloadPreset.SLOW -> AYMR.strings.smart_manga_preset_slow_summary
+                null -> AYMR.strings.smart_manga_preset_custom_summary
+            },
+        )
+        return Preference.PreferenceItem.CustomPreference(title) {
+            BasePreferenceWidget(
+                title = title,
+                subcomponent = {
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth().padding(
+                            horizontal = PrefsHorizontalPadding,
+                            vertical = 8.dp,
+                        ),
+                    ) {
+                        MangaDownloadPreset.entries.forEachIndexed { index, preset ->
+                            SegmentedButton(
+                                selected = selected == preset,
+                                onClick = { preferences.applyMangaDownloadPreset(preset) },
+                                enabled = enabled,
+                                shape = SegmentedButtonDefaults.itemShape(index, MangaDownloadPreset.entries.size),
+                            ) {
+                                Text(labels[index])
+                            }
+                        }
+                    }
+                    Text(
+                        modifier = Modifier.padding(horizontal = PrefsHorizontalPadding),
+                        text = description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+            )
+        }
+    }
+
+    @Composable
+    private fun smartMangaNumberPreference(
+        preference: PreferenceData<Int>,
+        title: String,
+        range: IntRange,
+        unit: String,
+        enabled: Boolean,
+        onValueChanged: (Int) -> Unit = {},
+    ): Preference.PreferenceItem.TextPreference {
+        val value by preference.collectAsState()
+        var showDialog by rememberSaveable { mutableStateOf(false) }
+        var input by rememberSaveable { mutableStateOf("") }
+        val limits = stringResource(AYMR.strings.smart_download_range, range.first, range.last, unit)
+        if (showDialog) {
+            val number = input.toIntOrNull()
+            val valid = number != null && number in range
+            AlertDialog(
+                onDismissRequest = { showDialog = false },
+                title = { Text(title) },
+                text = {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        isError = !valid,
+                        suffix = { Text(unit) },
+                        supportingText = { Text(limits) },
+                    )
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDialog = false }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = valid,
+                        onClick = {
+                            number?.takeIf { it in range }?.let {
+                                preference.set(it)
+                                onValueChanged(it)
+                                showDialog = false
+                            }
+                        },
+                    ) {
+                        Text(stringResource(MR.strings.action_ok))
+                    }
+                },
+            )
+        }
+        return Preference.PreferenceItem.TextPreference(
+            title = title,
+            subtitle = stringResource(AYMR.strings.smart_download_value, value.coerceIn(range), unit) + " · " + limits,
+            enabled = enabled,
+            onClick = {
+                input = value.coerceIn(range).toString()
+                showDialog = true
+            },
         )
     }
 

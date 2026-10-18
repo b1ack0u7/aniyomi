@@ -41,9 +41,19 @@ class MangaDownloadStore(
      *
      * @param downloads the list of downloads to add.
      */
+    @Synchronized
     fun addAll(downloads: List<MangaDownload>) {
         preferences.edit {
             downloads.forEach { putString(getKey(it), serialize(it)) }
+        }
+    }
+
+    @Synchronized
+    fun update(download: MangaDownload) {
+        val key = getKey(download)
+        val order = preferences.getString(key, null)?.let(::deserialize)?.order ?: return
+        preferences.edit {
+            putString(key, serialize(download, order))
         }
     }
 
@@ -52,6 +62,7 @@ class MangaDownloadStore(
      *
      * @param download the download to remove.
      */
+    @Synchronized
     fun remove(download: MangaDownload) {
         preferences.edit {
             remove(getKey(download))
@@ -63,6 +74,7 @@ class MangaDownloadStore(
      *
      * @param downloads the download to remove.
      */
+    @Synchronized
     fun removeAll(downloads: List<MangaDownload>) {
         preferences.edit {
             downloads.forEach { remove(getKey(it)) }
@@ -72,6 +84,7 @@ class MangaDownloadStore(
     /**
      * Removes all the downloads from the store.
      */
+    @Synchronized
     fun clear() {
         preferences.edit {
             clear()
@@ -100,7 +113,9 @@ class MangaDownloadStore(
         if (objs.isNotEmpty()) {
             val cachedManga = mutableMapOf<Long, Manga?>()
             val cachedChapters = mutableMapOf<Long, Map<Long, Chapter>>()
-            for ((mangaId, chapterId) in objs) {
+            for (obj in objs) {
+                val mangaId = obj.mangaId
+                val chapterId = obj.chapterId
                 val manga = cachedManga.getOrPut(mangaId) { getManga.await(mangaId) } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
                 // One query per manga rather than one per queued chapter
@@ -108,7 +123,11 @@ class MangaDownloadStore(
                     getChaptersByMangaId.await(mangaId).associateBy(Chapter::id)
                 }
                 val chapter = chapters[chapterId] ?: continue
-                downloads.add(MangaDownload(source, manga, chapter))
+                downloads.add(
+                    MangaDownload(source, manga, chapter).apply {
+                        if (obj.failed) status = MangaDownload.State.ERROR
+                    },
+                )
             }
         }
 
@@ -122,8 +141,13 @@ class MangaDownloadStore(
      *
      * @param download the download to serialize.
      */
-    private fun serialize(download: MangaDownload): String {
-        val obj = DownloadObject(download.manga.id, download.chapter.id, counter++)
+    private fun serialize(download: MangaDownload, order: Int = counter++): String {
+        val obj = DownloadObject(
+            download.manga.id,
+            download.chapter.id,
+            order,
+            failed = download.status == MangaDownload.State.ERROR,
+        )
         return json.encodeToString(obj)
     }
 
@@ -149,4 +173,9 @@ class MangaDownloadStore(
  * @param order the order of the download in the queue.
  */
 @Serializable
-private data class DownloadObject(val mangaId: Long, val chapterId: Long, val order: Int)
+private data class DownloadObject(
+    val mangaId: Long,
+    val chapterId: Long,
+    val order: Int,
+    val failed: Boolean = false,
+)

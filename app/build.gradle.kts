@@ -25,8 +25,8 @@ android {
     defaultConfig {
         applicationId = "xyz.b1ack0u7.aniyomi.mi"
 
-        versionCode = 135
-        versionName = "0.22.0"
+        versionCode = 136
+        versionName = "0.23.0"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -334,22 +334,6 @@ dependencies {
     implementation(aniyomilibs.seeker)
     // true type parser
     implementation(aniyomilibs.truetypeparser)
-}
-
-androidComponents {
-    beforeVariants { variantBuilder ->
-        // Disables standardBenchmark
-        if (variantBuilder.buildType == "benchmark") {
-            variantBuilder.enable = variantBuilder.productFlavors.containsAll(
-                listOf("default" to "dev"),
-            )
-        }
-    }
-    onVariants(selector().withFlavor("default" to "standard")) {
-        // Only excluding in standard flavor because this breaks
-        // Layout Inspector's Compose tree
-        it.packaging.resources.excludes.add("META-INF/*.version")
-    }
 }
 
 tasks.register("openReleaseApks") {

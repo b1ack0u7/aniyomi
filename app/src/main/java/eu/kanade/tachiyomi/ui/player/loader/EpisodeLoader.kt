@@ -8,8 +8,11 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
+import eu.kanade.tachiyomi.network.CloudflareChallengeException
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import kotlinx.coroutines.CancellationException
+import tachiyomi.core.common.util.lang.causeChain
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.items.episode.model.Episode
 import tachiyomi.source.local.entries.anime.LocalAnimeSource
@@ -189,7 +192,12 @@ class EpisodeLoader {
             }
         }
 
-        suspend fun loadHosterVideos(source: AnimeSource, hoster: Hoster, force: Boolean = false): HosterState {
+        suspend fun loadHosterVideos(
+            source: AnimeSource,
+            hoster: Hoster,
+            force: Boolean = false,
+            propagateSourceErrors: Boolean = false,
+        ): HosterState {
             if (!force && hoster.lazy) {
                 return HosterState.Idle(hoster.hosterName)
             }
@@ -200,6 +208,10 @@ class EpisodeLoader {
             } catch (e: Exception) {
                 if (e is CancellationException) {
                     throw e
+                }
+                if (propagateSourceErrors) {
+                    val isChallenge = e.causeChain().any { it is CloudflareChallengeException }
+                    if (isChallenge || SourceRequestCoordinator.isRetryable(e)) throw e
                 }
 
                 HosterState.Error(hoster.hosterName)

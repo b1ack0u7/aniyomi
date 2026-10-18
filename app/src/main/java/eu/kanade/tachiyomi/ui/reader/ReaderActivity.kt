@@ -56,6 +56,7 @@ import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
@@ -178,6 +179,7 @@ class ReaderActivity : BaseActivity() {
                 this,
                 manga.hashCode(),
                 Notifications.ID_NEW_CHAPTERS,
+                LibraryUpdateType.MANGA.notificationTag(manga),
             )
 
             lifecycleScope.launchNonCancellable {

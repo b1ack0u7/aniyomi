@@ -4,6 +4,8 @@ import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.network.CloudflareChallengeException
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.getChangedAt
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.withContext
+import tachiyomi.core.common.util.lang.causeChain
 import kotlin.coroutines.cancellation.CancellationException
 
 class HosterLoader {
@@ -75,14 +78,22 @@ class HosterLoader {
          * @param hosterList the list of hosters
          * @return the video, or null if no valid video was found
          */
-        suspend fun getBestVideo(source: AnimeSource, hosterList: List<Hoster>): Video? {
+        suspend fun getBestVideo(
+            source: AnimeSource,
+            hosterList: List<Hoster>,
+            propagateSourceErrors: Boolean = false,
+        ): Video? {
             val hosterStates = MutableList<HosterState>(hosterList.size) { HosterState.Idle("") }
 
             return try {
                 withContext(Dispatchers.IO) {
                     hosterList.mapIndexed { hosterIdx, hoster ->
                         async {
-                            val hosterState = EpisodeLoader.loadHosterVideos(source, hoster)
+                            val hosterState = EpisodeLoader.loadHosterVideos(
+                                source,
+                                hoster,
+                                propagateSourceErrors = propagateSourceErrors,
+                            )
                             hosterStates[hosterIdx] = hosterState
 
                             if (hosterState is HosterState.Ready) {
@@ -96,7 +107,7 @@ class HosterLoader {
                                             Video.State.LOAD_VIDEO,
                                         )
 
-                                    val resolvedVideo = getResolvedVideo(source, video)
+                                    val resolvedVideo = getResolvedVideo(source, video, propagateSourceErrors)
                                     if (resolvedVideo?.videoUrl?.isNotEmpty() == true) {
                                         coroutineContext.cancelChildren()
                                         throw EarlyReturnException(resolvedVideo)
@@ -124,7 +135,7 @@ class HosterLoader {
                                 Video.State.LOAD_VIDEO,
                             )
 
-                        val resolvedVideo = getResolvedVideo(source, video)
+                        val resolvedVideo = getResolvedVideo(source, video, propagateSourceErrors)
                         if (resolvedVideo?.videoUrl?.isNotEmpty() == true) {
                             coroutineContext.cancelChildren()
                             return@withContext resolvedVideo
@@ -149,13 +160,21 @@ class HosterLoader {
             }
         }
 
-        suspend fun getResolvedVideo(source: AnimeSource?, video: Video): Video? {
+        suspend fun getResolvedVideo(
+            source: AnimeSource?,
+            video: Video,
+            propagateSourceErrors: Boolean = false,
+        ): Video? {
             val resolvedVideo = if (source is AnimeHttpSource && !video.initialized) {
                 try {
                     source.resolveVideo(video)
                 } catch (e: Exception) {
                     if (e is CancellationException) {
                         throw e
+                    }
+                    if (propagateSourceErrors) {
+                        val isChallenge = e.causeChain().any { it is CloudflareChallengeException }
+                        if (isChallenge || SourceRequestCoordinator.isRetryable(e)) throw e
                     }
 
                     null

@@ -2,9 +2,8 @@ package tachiyomi.data.items.chapter
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonObject
-import logcat.LogPriority
 import tachiyomi.core.common.util.lang.toLong
-import tachiyomi.core.common.util.system.logcat
+import tachiyomi.data.Database
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.handlers.manga.MangaDatabaseHandler
 import tachiyomi.domain.items.chapter.model.Chapter
@@ -16,31 +15,43 @@ class ChapterRepositoryImpl(
 ) : ChapterRepository {
 
     override suspend fun addAllChapters(chapters: List<Chapter>): List<Chapter> {
-        return try {
-            handler.await(inTransaction = true) {
-                chapters.map { chapter ->
-                    chaptersQueries.insert(
-                        chapter.mangaId,
-                        chapter.url,
-                        chapter.name,
-                        chapter.scanlator,
-                        chapter.read,
-                        chapter.bookmark,
-                        chapter.lastPageRead,
-                        chapter.chapterNumber,
-                        chapter.sourceOrder,
-                        chapter.dateFetch,
-                        chapter.dateUpload,
-                        chapter.version,
-                        chapter.memo,
-                    )
-                    val lastInsertId = chaptersQueries.selectLastInsertedRowId().executeAsOne()
-                    chapter.copy(id = lastInsertId)
-                }
+        return handler.await(inTransaction = true) { insertChapters(chapters) }
+    }
+
+    override suspend fun syncChapters(
+        chaptersToAdd: List<Chapter>,
+        chaptersToUpdate: List<ChapterUpdate>,
+        chapterIdsToDelete: List<Long>,
+    ): List<Chapter> {
+        return handler.await(inTransaction = true) {
+            if (chapterIdsToDelete.isNotEmpty()) {
+                chaptersQueries.removeChaptersWithIds(chapterIdsToDelete)
             }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
-            emptyList()
+            val addedChapters = insertChapters(chaptersToAdd)
+            updateChapters(chaptersToUpdate)
+            addedChapters
+        }
+    }
+
+    private fun Database.insertChapters(chapters: List<Chapter>): List<Chapter> {
+        return chapters.map { chapter ->
+            chaptersQueries.insert(
+                chapter.mangaId,
+                chapter.url,
+                chapter.name,
+                chapter.scanlator,
+                chapter.read,
+                chapter.bookmark,
+                chapter.lastPageRead,
+                chapter.chapterNumber,
+                chapter.sourceOrder,
+                chapter.dateFetch,
+                chapter.dateUpload,
+                chapter.version,
+                chapter.memo,
+            )
+            val lastInsertId = chaptersQueries.selectLastInsertedRowId().executeAsOne()
+            chapter.copy(id = lastInsertId)
         }
     }
 
@@ -53,35 +64,33 @@ class ChapterRepositoryImpl(
     }
 
     private suspend fun partialUpdate(vararg chapterUpdates: ChapterUpdate) {
-        handler.await(inTransaction = true) {
-            chapterUpdates.forEach { chapterUpdate ->
-                chaptersQueries.update(
-                    mangaId = chapterUpdate.mangaId,
-                    url = chapterUpdate.url,
-                    name = chapterUpdate.name,
-                    scanlator = chapterUpdate.scanlator,
-                    read = chapterUpdate.read,
-                    bookmark = chapterUpdate.bookmark,
-                    lastPageRead = chapterUpdate.lastPageRead,
-                    chapterNumber = chapterUpdate.chapterNumber,
-                    sourceOrder = chapterUpdate.sourceOrder,
-                    dateFetch = chapterUpdate.dateFetch,
-                    dateUpload = chapterUpdate.dateUpload,
-                    chapterId = chapterUpdate.id,
-                    version = chapterUpdate.version,
-                    isSyncing = 0,
-                    memo = chapterUpdate.memo?.let(MemoColumnAdapter::encode),
-                )
-            }
+        handler.await(inTransaction = true) { updateChapters(chapterUpdates.toList()) }
+    }
+
+    private fun Database.updateChapters(chapterUpdates: List<ChapterUpdate>) {
+        chapterUpdates.forEach { chapterUpdate ->
+            chaptersQueries.update(
+                mangaId = chapterUpdate.mangaId,
+                url = chapterUpdate.url,
+                name = chapterUpdate.name,
+                scanlator = chapterUpdate.scanlator,
+                read = chapterUpdate.read,
+                bookmark = chapterUpdate.bookmark,
+                lastPageRead = chapterUpdate.lastPageRead,
+                chapterNumber = chapterUpdate.chapterNumber,
+                sourceOrder = chapterUpdate.sourceOrder,
+                dateFetch = chapterUpdate.dateFetch,
+                dateUpload = chapterUpdate.dateUpload,
+                chapterId = chapterUpdate.id,
+                version = chapterUpdate.version,
+                isSyncing = 0,
+                memo = chapterUpdate.memo?.let(MemoColumnAdapter::encode),
+            )
         }
     }
 
     override suspend fun removeChaptersWithIds(chapterIds: List<Long>) {
-        try {
-            handler.await { chaptersQueries.removeChaptersWithIds(chapterIds) }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
-        }
+        handler.await { chaptersQueries.removeChaptersWithIds(chapterIds) }
     }
 
     override suspend fun getChapterByMangaId(mangaId: Long, applyScanlatorFilter: Boolean): List<Chapter> {

@@ -981,7 +981,8 @@ class MangaScreenModel(
             val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
 
             if (chaptersToDownload.isNotEmpty()) {
-                downloadChapters(chaptersToDownload)
+                downloadManager.downloadChapters(manga, chaptersToDownload, autoStart = false)
+                downloadManager.startDownloadsAutomatically()
             }
         }
     }

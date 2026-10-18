@@ -67,6 +67,7 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.serialize
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.torrent.service.TorrentServerService
@@ -196,6 +197,7 @@ class PlayerActivity : BaseActivity() {
             this,
             animeId.hashCode(),
             Notifications.ID_NEW_EPISODES,
+            LibraryUpdateType.ANIME.notificationTag(animeId),
         )
 
         viewModel.saveCurrentEpisodeWatchingProgress()

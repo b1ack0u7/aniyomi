@@ -14,7 +14,6 @@ import tachiyomi.data.items.chapter.ChapterSanitizer
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.items.chapter.interactor.ShouldUpdateDbChapter
-import tachiyomi.domain.items.chapter.interactor.UpdateChapter
 import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.items.chapter.model.NoChaptersException
 import tachiyomi.domain.items.chapter.model.toChapterUpdate
@@ -32,7 +31,6 @@ class SyncChaptersWithSource(
     private val chapterRepository: ChapterRepository,
     private val shouldUpdateDbChapter: ShouldUpdateDbChapter,
     private val updateManga: UpdateManga,
-    private val updateChapter: UpdateChapter,
     private val getChaptersByMangaId: GetChaptersByMangaId,
     private val getExcludedScanlators: GetExcludedScanlators,
     private val libraryPreferences: LibraryPreferences,
@@ -185,7 +183,7 @@ class SyncChaptersWithSource(
         // Date fetch is set in such a way that the upper ones will have bigger value than the lower ones
         // Sources MUST return the chapters from most to less recent, which is common.
         var itemCount = newChapters.size
-        var updatedToAdd = newChapters.map { toAddItem ->
+        val updatedToAdd = newChapters.map { toAddItem ->
             var chapter = toAddItem.copy(dateFetch = nowMillis + itemCount--)
 
             if (chapter.chapterNumber in readChapterNumbers && markDuplicateAsRead) {
@@ -210,26 +208,18 @@ class SyncChaptersWithSource(
             chapter
         }
 
-        if (removedChapters.isNotEmpty()) {
-            val toDeleteIds = removedChapters.map { it.id }
-            chapterRepository.removeChaptersWithIds(toDeleteIds)
-        }
-
-        if (updatedToAdd.isNotEmpty()) {
-            updatedToAdd = chapterRepository.addAllChapters(updatedToAdd)
-        }
-
-        if (updatedChapters.isNotEmpty()) {
-            val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
-            updateChapter.awaitAll(chapterUpdates)
-        }
+        val addedChapters = chapterRepository.syncChapters(
+            chaptersToAdd = updatedToAdd,
+            chaptersToUpdate = updatedChapters.map { it.toChapterUpdate() },
+            chapterIdsToDelete = removedChapters.map { it.id },
+        )
         // Also sets this manga as updated since chapters were changed.
         // Note that last_update actually represents last time the chapter list changed at all
         updateManga.awaitUpdateFetchIntervalAndLastUpdate(manga, now, fetchWindow)
 
         val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
 
-        return updatedToAdd.filterNot {
+        return addedChapters.filterNot {
             it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators
         }
     }

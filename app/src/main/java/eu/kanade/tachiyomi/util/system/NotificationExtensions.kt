@@ -56,6 +56,10 @@ fun Context.cancelNotification(id: Int) {
     NotificationManagerCompat.from(this).cancel(id)
 }
 
+fun Context.cancelNotification(tag: String?, id: Int) {
+    NotificationManagerCompat.from(this).cancel(tag, id)
+}
+
 /**
  * Helper method to create a notification builder.
  *

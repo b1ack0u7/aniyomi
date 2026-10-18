@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download.manga
 
 import android.content.Context
+import androidx.core.content.edit
 import aniyomi.util.DataSaver
 import aniyomi.util.DataSaver.Companion.getImage
 import com.hippo.unifile.UniFile
@@ -8,9 +9,14 @@ import eu.kanade.domain.entries.manga.model.getComicInfo
 import eu.kanade.domain.items.chapter.model.toSChapter
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.download.DownloadStartState
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
+import eu.kanade.tachiyomi.network.CloudflareChallengeException
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -18,31 +24,32 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.retryWhen
-import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
+import okio.Buffer
+import okio.ForwardingSource
 import okio.Throttler
 import okio.buffer
 import tachiyomi.core.common.i18n.stringResource
@@ -64,6 +71,9 @@ import tachiyomi.i18n.aniyomi.AYMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.io.IOException
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -94,6 +104,13 @@ class MangaDownloader(
      * Store for persisting downloads across restarts.
      */
     private val store = MangaDownloadStore(context)
+    private val smartStore = context.getSharedPreferences("smart_manga_downloads", Context.MODE_PRIVATE)
+    private val startState = DownloadStartState(smartStore)
+    private val limiter = MangaDownloadLimiter(smartStore, downloadPreferences)
+    private val sourceRequests: SourceRequestCoordinator by lazy { Injekt.get() }
+    private val restored = CompletableDeferred<Unit>()
+
+    suspend fun awaitRestored() = restored.await()
 
     /**
      * Queue where active downloads are kept.
@@ -113,6 +130,7 @@ class MangaDownloader(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloaderJob: Job? = null
+    private var workerOwner: String? = null
 
     /**
      * Whether the downloader is running.
@@ -129,7 +147,11 @@ class MangaDownloader(
     init {
         // Restoring hits the database once per queued manga, so keep it off the main thread
         scope.launchIO {
-            addAllToQueue(store.restore())
+            try {
+                addAllToQueue(store.restore(), preserveErrors = true)
+            } finally {
+                restored.complete(Unit)
+            }
         }
     }
 
@@ -139,15 +161,28 @@ class MangaDownloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
-    fun start(): Boolean {
+    @Synchronized
+    fun start(automatic: Boolean = false, owner: String? = null): Boolean {
+        if (automatic && !startState.canStartAutomatically()) return false
         if (isRunning || queueState.value.isEmpty()) {
             return false
         }
 
-        val pending = queueState.value.filter { it.status != MangaDownload.State.DOWNLOADED }
-        pending.forEach { if (it.status != MangaDownload.State.QUEUE) it.status = MangaDownload.State.QUEUE }
+        val pending = queueState.value.filter {
+            it.status != MangaDownload.State.DOWNLOADED && (!automatic || it.status != MangaDownload.State.ERROR)
+        }
+        if (pending.isEmpty()) return false
+        pending.forEach {
+            if (it.status != MangaDownload.State.QUEUE) {
+                it.status = MangaDownload.State.QUEUE
+                store.update(it)
+            }
+        }
 
         isPaused = false
+        workerOwner = owner
+        smartStore.edit { putBoolean("resume", true) }
+        MangaDownloadResumeJob.cancel(context)
 
         launchDownloaderJob()
 
@@ -157,7 +192,10 @@ class MangaDownloader(
     /**
      * Stops the downloader.
      */
+    @Synchronized
     fun stop(reason: String? = null) {
+        smartStore.edit { putBoolean("resume", false) }
+        MangaDownloadResumeJob.cancel(context)
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == MangaDownload.State.DOWNLOADING }
@@ -182,7 +220,10 @@ class MangaDownloader(
     /**
      * Pauses the downloader
      */
+    @Synchronized
     fun pause() {
+        smartStore.edit { putBoolean("resume", false) }
+        MangaDownloadResumeJob.cancel(context)
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == MangaDownload.State.DOWNLOADING }
@@ -193,7 +234,10 @@ class MangaDownloader(
     /**
      * Removes everything from the queue.
      */
+    @Synchronized
     fun clearQueue() {
+        smartStore.edit { putBoolean("resume", false) }
+        MangaDownloadResumeJob.cancel(context)
         cancelDownloaderJob()
 
         internalClearQueue()
@@ -207,57 +251,113 @@ class MangaDownloader(
         if (isRunning) return
 
         downloaderJob = scope.launch {
-            val activeDownloadsFlow = queueState.transformLatest { queue ->
-                while (true) {
-                    val activeDownloads = queue.asSequence()
-                        .filter {
-                            it.status.value <= MangaDownload.State.DOWNLOADING.value
-                        } // Ignore completed downloads, leave them in the queue
-                        .groupBy { it.source }
-                        .toList().take(5)
-                        .map { (_, downloads) -> downloads.first() }
-                    emit(activeDownloads)
-
-                    if (activeDownloads.isEmpty()) break
-                    // Suspend until a download enters the ERROR state
-                    val activeDownloadsErroredFlow =
-                        combine(activeDownloads.map(MangaDownload::statusFlow)) { states ->
-                            states.contains(MangaDownload.State.ERROR)
-                        }.filter { it }
-                    activeDownloadsErroredFlow.first()
-                }
-            }.distinctUntilChanged()
-
-            // Use supervisorScope to cancel child jobs when the downloader job is cancelled
             supervisorScope {
-                val downloadJobs = mutableMapOf<MangaDownload, Job>()
-
-                activeDownloadsFlow.collectLatest { activeDownloads ->
-                    val downloadJobsToStop = downloadJobs.filter { it.key !in activeDownloads }
-                    downloadJobsToStop.forEach { (download, job) ->
-                        job.cancel()
-                        downloadJobs.remove(download)
+                val jobs = mutableMapOf<MangaDownload, Job>()
+                while (isActive) {
+                    jobs.entries.removeAll { !it.value.isActive }
+                    val pending = queueState.value.filter {
+                        it.status.value <= MangaDownload.State.DOWNLOADING.value
                     }
-
-                    val downloadsToStart = activeDownloads.filter { it !in downloadJobs }
-                    downloadsToStart.forEach { download ->
-                        downloadJobs[download] = launchDownloadJob(download)
+                    jobs.filterKeys { it !in pending }.values.forEach { it.cancel() }
+                    val groups = pending.groupBy { it.source.id }
+                    val now = System.currentTimeMillis()
+                    groups.forEach { (source, downloads) ->
+                        val message = waitingMessage(source)
+                        downloads.forEach { it.waitingMessage.value = message }
                     }
+                    val activeSources = jobs.filterValues { it.isActive }.keys.map { it.source.id }.toSet()
+                    groups.entries.asSequence()
+                        .filter { (source, _) -> source !in activeSources && limiter.ready(source) }
+                        .take((5 - activeSources.size).coerceAtLeast(0))
+                        .forEach { (_, downloads) ->
+                            val download = downloads.first()
+                            jobs[download] = launchDownloadJob(download)
+                        }
+                    if (pending.isEmpty() && jobs.values.none { it.isActive }) {
+                        stop()
+                        return@supervisorScope
+                    }
+                    if (pending.isNotEmpty() && jobs.values.none { it.isActive }) {
+                        val wakeAt = groups.keys.filterNot { limiter.blocked(it) }
+                            .minOfOrNull { limiter.deadline(it) }
+                        if (wakeAt == null || wakeAt - now > FOREGROUND_WAIT_LIMIT_MS) {
+                            suspendUntilReady(wakeAt)
+                            return@supervisorScope
+                        }
+                    }
+                    delay(500)
                 }
             }
         }
     }
 
+    private fun waitingMessage(source: Long): String? = when {
+        limiter.blocked(source) -> context.stringResource(AYMR.strings.smart_download_challenge)
+        limiter.deadline(source) > System.currentTimeMillis() -> context.stringResource(
+            AYMR.strings.smart_download_waiting,
+            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+                .format(Date(limiter.deadline(source))),
+        )
+        else -> null
+    }
+
+    @Synchronized
+    fun onWorkerStopped(owner: String) {
+        if (workerOwner == owner && isRunning) {
+            suspendForNetwork(context.stringResource(AYMR.strings.download_paused))
+        }
+    }
+
+    @Synchronized
+    fun suspendForNetwork(reason: String) {
+        if (!smartStore.getBoolean("resume", false)) return
+        if (!limiter.enabled) {
+            stop(reason)
+            return
+        }
+        cancelDownloaderJob()
+        queueState.value.filter { it.status == MangaDownload.State.DOWNLOADING }
+            .forEach { it.status = MangaDownload.State.QUEUE }
+        smartStore.edit { putBoolean("resume", true) }
+        MangaDownloadResumeJob.schedule(context, System.currentTimeMillis() + 30_000)
+        notifier.onWaiting(reason, automatic = true)
+    }
+
+    @Synchronized
+    private fun suspendUntilReady(wakeAt: Long?) {
+        if (!smartStore.getBoolean("resume", false)) return
+        if (wakeAt != null) MangaDownloadResumeJob.schedule(context, wakeAt)
+        notifier.onWaiting(
+            queueState.value.firstNotNullOfOrNull { it.waitingMessage.value }.orEmpty(),
+            automatic = wakeAt != null,
+        )
+        MangaDownloadJob.stop(context)
+        cancelDownloaderJob()
+    }
+
+    fun resumeChallenges() {
+        startState.resumeManually()
+        limiter.resumeChallenges()
+    }
+
+    fun prepareAutomaticStart(): Boolean {
+        val hasPending = queueState.value.any {
+            it.status != MangaDownload.State.ERROR && it.status != MangaDownload.State.DOWNLOADED
+        }
+        return hasPending && startState.prepareAutomaticStart()
+    }
+
+    fun pauseByUser() {
+        startState.pauseByUser()
+        pause()
+    }
+
     private fun CoroutineScope.launchDownloadJob(download: MangaDownload) = launchIO {
         try {
             downloadChapter(download)
-
-            // Remove successful download from queue
             if (download.status == MangaDownload.State.DOWNLOADED) {
+                limiter.completed(download.source.id)
                 removeFromQueue(download)
-            }
-            if (areAllDownloadsFinished()) {
-                stop()
             }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
@@ -265,6 +365,26 @@ class MangaDownloader(
             notifier.onError(e.message)
             stop()
         }
+    }
+
+    private suspend fun <T> sourceRequest(source: Long, block: suspend () -> T): T {
+        return sourceRequests.withRequest(LibraryUpdateType.MANGA, source) {
+            limiter.beforeRequest(source)
+            try {
+                block()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                currentCoroutineContext().ensureActive()
+                if (limiter.defer(source, error, networkFailure = true)) throw SourceDownloadWaiting()
+                throw error
+            }
+        }
+    }
+
+    private fun deferDownload(download: MangaDownload, error: Throwable): Boolean {
+        if (!limiter.defer(download.source.id, error)) return false
+        download.status = MangaDownload.State.QUEUE
+        return true
     }
 
     /**
@@ -328,7 +448,9 @@ class MangaDownloader(
                         NotificationHandler.openUrl(context, MangaLibraryUpdateNotifier.HELP_WARNING_URL),
                     )
                 }
-                MangaDownloadJob.start(context)
+                if (prepareAutomaticStart()) MangaDownloadJob.start(context, automatic = true)
+            } else if (autoStart && smartStore.getBoolean("resume", false) && !isRunning) {
+                MangaDownloadJob.start(context, automatic = true)
             }
         }
     }
@@ -344,6 +466,7 @@ class MangaDownloader(
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
         if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
             download.status = MangaDownload.State.ERROR
+            store.update(download)
             notifier.onError(
                 context.stringResource(AYMR.strings.download_insufficient_space),
                 download.chapter.name,
@@ -360,7 +483,9 @@ class MangaDownloader(
             // If the page list already exists, start from the file
             val pageList = download.pages ?: run {
                 // Otherwise, pull page list from network and add them to download object
-                val pages = download.source.getPageList(download.chapter.toSChapter())
+                val pages = sourceRequest(download.source.id) {
+                    download.source.getPageList(download.chapter.toSChapter())
+                }
 
                 if (pages.isEmpty()) {
                     throw Exception(context.stringResource(MR.strings.page_list_empty_error))
@@ -392,16 +517,18 @@ class MangaDownloader(
             download.status = MangaDownload.State.DOWNLOADING
 
             // Start downloading images, consider we can have downloaded images already
-            // Concurrently do 2 pages at a time
+            // Extensions may resolve multiple requests internally; serialize page operations in smart mode.
             pageList.asFlow()
-                .flatMapMerge(concurrency = 2) { page ->
+                .flatMapMerge(concurrency = if (limiter.enabled) 1 else 2) { page ->
                     flow {
                         // Fetch image URL if necessary
                         if (page.imageUrl.isNullOrEmpty()) {
                             page.status = Page.State.LOAD_PAGE
                             try {
-                                page.imageUrl = download.source.getImageUrl(page)
+                                page.imageUrl = sourceRequest(download.source.id) { download.source.getImageUrl(page) }
                             } catch (e: Throwable) {
+                                if (e is CancellationException) throw e
+                                if (deferDownload(download, e)) throw SourceDownloadWaiting()
                                 page.status = Page.State.ERROR
                             }
                         }
@@ -418,6 +545,7 @@ class MangaDownloader(
             // Do after download completes
             if (!isDownloadSuccessful(download, tmpDir)) {
                 download.status = MangaDownload.State.ERROR
+                store.update(download)
                 return
             }
 
@@ -441,9 +569,14 @@ class MangaDownloader(
             download.status = MangaDownload.State.DOWNLOADED
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
+            if (deferDownload(download, error)) {
+                if (limiter.blocked(download.source.id)) notifier.onSourceChallenge(download)
+                return
+            }
             // If the page list threw, it will resume here
             logcat(LogPriority.ERROR, error)
             download.status = MangaDownload.State.ERROR
+            store.update(download)
             notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
         }
     }
@@ -495,6 +628,7 @@ class MangaDownloader(
             page.status = Page.State.READY
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            if (deferDownload(download, e)) throw SourceDownloadWaiting()
             // Mark this page as error and allow to download the remaining
             page.progress = 0
             page.status = Page.State.ERROR
@@ -520,13 +654,31 @@ class MangaDownloader(
         page.status = Page.State.DOWNLOAD_IMAGE
         page.progress = 0
         return flow {
-            val response = source.getImage(page, dataSaver)
+            val response = sourceRequest(source.id) { source.getImage(page, dataSaver) }
+            if (response.header("cf-mitigated") == "challenge") {
+                response.close()
+                throw CloudflareChallengeException(
+                    context.stringResource(MR.strings.information_cloudflare_bypass_failure),
+                )
+            }
+            if (!response.isSuccessful) {
+                val error = HttpException(response.code, response.header("Retry-After"))
+                response.close()
+                throw error
+            }
             val file = tmpDir.createFile("$filename.tmp")!!
             try {
                 throttler.apply {
                     bytesPerSecond(downloadPreferences.downloadSpeedLimit().get().toLong() * 1024)
                 }
-                val throttledSource = throttler.source(response.body.source()).buffer()
+                val networkSource = object : ForwardingSource(response.body.source()) {
+                    override fun read(sink: Buffer, byteCount: Long): Long = try {
+                        super.read(sink, byteCount)
+                    } catch (error: IOException) {
+                        throw SourceNetworkException(error)
+                    }
+                }
+                val throttledSource = throttler.source(networkSource).buffer()
                 throttledSource.saveTo(file.openOutputStream())
                 throttledSource.close()
                 val extension = getImageExtension(response, file)
@@ -534,12 +686,15 @@ class MangaDownloader(
             } catch (e: Exception) {
                 response.close()
                 file.delete()
+                currentCoroutineContext().ensureActive()
                 throw e
             }
             emit(file)
         }
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
-            .retryWhen { _, attempt ->
+            .retryWhen { error, attempt ->
+                if (error is CancellationException) throw error
+                if (limiter.enabled) throw error
                 if (attempt < 3) {
                     delay((2L shl attempt.toInt()) * 1000)
                     true
@@ -677,17 +832,13 @@ class MangaDownloader(
         }
     }
 
-    /**
-     * Returns true if all the queued downloads are in DOWNLOADED or ERROR state.
-     */
-    private fun areAllDownloadsFinished(): Boolean {
-        return queueState.value.none { it.status.value <= MangaDownload.State.DOWNLOADING.value }
-    }
-
-    private fun addAllToQueue(downloads: List<MangaDownload>) {
+    private fun addAllToQueue(downloads: List<MangaDownload>, preserveErrors: Boolean = false) {
         _queueState.update {
             downloads.forEach { download ->
-                download.status = MangaDownload.State.QUEUE
+                download.waitingMessage.value = waitingMessage(download.source.id)
+                if (!preserveErrors || download.status != MangaDownload.State.ERROR) {
+                    download.status = MangaDownload.State.QUEUE
+                }
             }
             store.addAll(downloads)
             it + downloads
@@ -743,7 +894,7 @@ class MangaDownloader(
     }
 
     fun updateQueue(downloads: List<MangaDownload>) {
-        val wasRunning = isRunning
+        val wasRunning = isRunning || smartStore.getBoolean("resume", false)
 
         if (downloads.isEmpty()) {
             clearQueue()
@@ -753,10 +904,11 @@ class MangaDownloader(
 
         pause()
         internalClearQueue()
-        addAllToQueue(downloads)
+        addAllToQueue(downloads, preserveErrors = true)
 
         if (wasRunning) {
-            start()
+            smartStore.edit { putBoolean("resume", true) }
+            MangaDownloadJob.start(context, automatic = true)
         }
     }
 
@@ -765,6 +917,9 @@ class MangaDownloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+
+        // Android may batch background jobs, so keep short rests in the foreground worker.
+        private const val FOREGROUND_WAIT_LIMIT_MS = 180_000L
     }
 }
 

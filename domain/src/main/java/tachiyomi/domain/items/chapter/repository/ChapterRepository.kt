@@ -8,6 +8,12 @@ interface ChapterRepository {
 
     suspend fun addAllChapters(chapters: List<Chapter>): List<Chapter>
 
+    suspend fun syncChapters(
+        chaptersToAdd: List<Chapter>,
+        chaptersToUpdate: List<ChapterUpdate>,
+        chapterIdsToDelete: List<Long>,
+    ): List<Chapter>
+
     suspend fun updateChapter(chapterUpdate: ChapterUpdate)
 
     suspend fun updateAllChapters(chapterUpdates: List<ChapterUpdate>)

@@ -51,6 +51,7 @@ class MangaDownloadHolder(private val view: View, val adapter: MangaDownloadAdap
             notifyProgress()
             notifyDownloadedPages()
         }
+        notifyDownloadedPages()
     }
 
     /**
@@ -68,8 +69,11 @@ class MangaDownloadHolder(private val view: View, val adapter: MangaDownloadAdap
      * Updates the text field of the number of downloaded pages.
      */
     fun notifyDownloadedPages() {
-        val pages = download.pages ?: return
-        binding.downloadProgressText.text = "${download.downloadedImages}/${pages.size}"
+        val pages = download.pages
+        binding.downloadProgressText.text = pages?.let { "${download.downloadedImages}/${it.size}" }.orEmpty()
+        val waiting = download.waitingMessage.value
+        binding.chapterTitle.maxLines = if (waiting == null) 1 else 3
+        binding.chapterTitle.text = if (waiting == null) download.chapter.name else "${download.chapter.name}\n$waiting"
     }
 
     override fun onItemReleased(position: Int) {

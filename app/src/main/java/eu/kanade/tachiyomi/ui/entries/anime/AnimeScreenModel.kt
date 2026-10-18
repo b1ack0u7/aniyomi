@@ -1182,7 +1182,8 @@ class AnimeScreenModel(
             val episodesToDownload = filterEpisodesForDownload.await(anime, episodes)
 
             if (episodesToDownload.isNotEmpty()) {
-                downloadEpisodes(episodesToDownload)
+                downloadManager.downloadEpisodes(anime, episodesToDownload, autoStart = false)
+                downloadManager.startDownloadsAutomatically()
             }
         }
     }
