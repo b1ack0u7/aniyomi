@@ -458,6 +458,7 @@ class MainActivity : BaseActivity() {
                 applicationContext,
                 notificationId,
                 intent.getIntExtra("groupId", 0),
+                intent.getStringExtra(NotificationReceiver.EXTRA_NOTIFICATION_TAG),
             )
         }
 

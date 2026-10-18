@@ -35,6 +35,7 @@ import eu.kanade.tachiyomi.extension.anime.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.manga.MangaExtensionManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.source.anime.AndroidAnimeSourceManager
 import eu.kanade.tachiyomi.source.manga.AndroidMangaSourceManager
 import eu.kanade.tachiyomi.ui.player.ExternalIntents
@@ -201,6 +202,13 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { AnimeBackgroundCache(app) }
 
         addSingletonFactory { NetworkHelper(app, get()) }
+        addSingletonFactory {
+            SourceRequestCoordinator(
+                app.getSharedPreferences("smart_manga_downloads", Application.MODE_PRIVATE),
+                app.getSharedPreferences("anime_source_requests", Application.MODE_PRIVATE),
+                get(),
+            )
+        }
         addSingletonFactory { JavaScriptEngine(app) }
 
         addSingletonFactory<MangaSourceManager> { AndroidMangaSourceManager(app, get(), get()) }

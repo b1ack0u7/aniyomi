@@ -60,9 +60,13 @@ fun Call.asObservable(): Observable<Response> {
 
 fun Call.asObservableSuccess(): Observable<Response> {
     return asObservable().doOnNext { response ->
+        if (response.header("cf-mitigated") == "challenge") {
+            response.close()
+            throw CloudflareChallengeException("Cloudflare challenge requires WebView")
+        }
         if (!response.isSuccessful) {
             response.close()
-            throw HttpException(response.code)
+            throw HttpException(response.code, response.header("Retry-After"))
         }
     }
 }
@@ -82,8 +86,8 @@ private suspend fun Call.await(callStack: Array<StackTraceElement>): Response {
                 override fun onFailure(call: Call, e: IOException) {
                     // Don't bother with resuming the continuation if it is already cancelled.
                     if (continuation.isCancelled) return
-                    val exception = IOException(e.message, e).apply { stackTrace = callStack }
-                    continuation.resumeWithException(exception)
+                    e.stackTrace += callStack
+                    continuation.resumeWithException(e)
                 }
             }
 
@@ -110,9 +114,13 @@ suspend fun Call.await(): Response {
 suspend fun Call.awaitSuccess(): Response {
     val callStack = Exception().stackTrace.run { copyOfRange(1, size) }
     val response = await(callStack)
+    if (response.header("cf-mitigated") == "challenge") {
+        response.close()
+        throw CloudflareChallengeException("Cloudflare challenge requires WebView").apply { stackTrace = callStack }
+    }
     if (!response.isSuccessful) {
         response.close()
-        throw HttpException(response.code).apply { stackTrace = callStack }
+        throw HttpException(response.code, response.header("Retry-After")).apply { stackTrace = callStack }
     }
     return response
 }
@@ -154,4 +162,11 @@ fun <T> decodeFromJsonResponse(
  * @since extensions-lib 1.5
  * @param code [Int] the HTTP status code
  */
-class HttpException(val code: Int) : IllegalStateException("HTTP error $code")
+class HttpException(val code: Int) : IllegalStateException("HTTP error $code") {
+    var retryAfter: String? = null
+        private set
+
+    constructor(code: Int, retryAfter: String?) : this(code) {
+        this.retryAfter = retryAfter
+    }
+}

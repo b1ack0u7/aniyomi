@@ -10,6 +10,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.network.AndroidCookieJar
+import eu.kanade.tachiyomi.network.CloudflareChallengeException
 import eu.kanade.tachiyomi.util.system.isOutdated
 import eu.kanade.tachiyomi.util.system.toast
 import okhttp3.Cookie
@@ -44,12 +45,20 @@ class CloudflareInterceptor(
                 .firstOrNull { it.name == "cf_clearance" }
             resolveWithWebView(request, oldCookie)
 
-            return chain.proceed(request)
+            val retryResponse = chain.proceed(request)
+            if (shouldIntercept(retryResponse)) {
+                retryResponse.close()
+                throw CloudflareBypassException()
+            }
+            return retryResponse
         }
         // Because OkHttp's enqueue only handles IOExceptions, wrap the exception so that
         // we don't crash the entire app
         catch (e: CloudflareBypassException) {
-            throw IOException(context.stringResource(MR.strings.information_cloudflare_bypass_failure), e)
+            throw CloudflareChallengeException(
+                context.stringResource(MR.strings.information_cloudflare_bypass_failure),
+                e,
+            )
         } catch (e: Exception) {
             throw IOException(e)
         }
