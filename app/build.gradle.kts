@@ -336,22 +336,6 @@ dependencies {
     implementation(aniyomilibs.truetypeparser)
 }
 
-androidComponents {
-    beforeVariants { variantBuilder ->
-        // Disables standardBenchmark
-        if (variantBuilder.buildType == "benchmark") {
-            variantBuilder.enable = variantBuilder.productFlavors.containsAll(
-                listOf("default" to "dev"),
-            )
-        }
-    }
-    onVariants(selector().withFlavor("default" to "standard")) {
-        // Only excluding in standard flavor because this breaks
-        // Layout Inspector's Compose tree
-        it.packaging.resources.excludes.add("META-INF/*.version")
-    }
-}
-
 tasks.register("openReleaseApks") {
     description = "Opens the release APK output directory in the system file manager."
     group = "build"
