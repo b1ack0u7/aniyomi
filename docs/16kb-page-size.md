@@ -22,7 +22,35 @@ the NDK deliberately keeps 4 KB alignment there.
 ./scripts/check-16kb-alignment.sh app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
 
-Exits non-zero and names every offending library.
+The script requires Bash, Python 3.8+ (standard library only), and `readelf` or
+`llvm-readelf`. With no arguments, it checks all APKs under `app/build`.
+For every 64-bit `.so`, it checks compression, the actual ZIP data offset, and
+every ELF `PT_LOAD` alignment. The data offset is calculated from the local file
+header, including its filename and extra-field lengths; the central-directory
+extra field is not a substitute for the local one.
+
+It exits with 0 when all checked libraries pass (also for valid APKs without
+64-bit libraries), 1 for incompatible libraries or unreadable/malformed APKs,
+and 2 for missing tools or no APKs found. ZIP and ELF failures are reported
+separately: repackaging/alignment fixes ZIP layout; rebuilding or upgrading the
+native dependency fixes ELF alignment.
+
+As an independent ZIP-layout check, use the SDK's
+[`zipalign`](https://developer.android.com/tools/zipalign):
+
+```sh
+"$ANDROID_HOME/build-tools/35.0.1/zipalign" -c -P 16 -v 4 path/to/app.apk
+```
+
+Align APKs before signing with `apksigner`; checking alignment does not modify
+an existing APK. `zipalign` checks other uncompressed entries as well and does
+not check ELF segment alignment.
+
+Run verifier regression tests with:
+
+```sh
+python3 -B -m unittest discover -s scripts/tests -p 'test_check_16kb_alignment.py' -v
+```
 
 ## Current status
 
