@@ -1,46 +1,57 @@
 package tachiyomi.data.items.episode
 
 import kotlinx.coroutines.flow.Flow
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.handlers.anime.AnimeDatabaseHandler
 import tachiyomi.domain.items.episode.model.Episode
 import tachiyomi.domain.items.episode.model.EpisodeUpdate
 import tachiyomi.domain.items.episode.repository.EpisodeRepository
+import tachiyomi.mi.data.AnimeDatabase
 
 class EpisodeRepositoryImpl(
     private val handler: AnimeDatabaseHandler,
 ) : EpisodeRepository {
 
     override suspend fun addAllEpisodes(episodes: List<Episode>): List<Episode> {
-        return try {
-            handler.await(inTransaction = true) {
-                episodes.map { episode ->
-                    episodesQueries.insert(
-                        episode.animeId,
-                        episode.url,
-                        episode.name,
-                        episode.scanlator,
-                        episode.seen,
-                        episode.bookmark,
-                        episode.lastSecondSeen,
-                        episode.totalSeconds,
-                        episode.episodeNumber,
-                        episode.sourceOrder,
-                        episode.dateFetch,
-                        episode.dateUpload,
-                        episode.version,
-                        episode.summary,
-                        episode.previewUrl,
-                        episode.fillermark,
-                    )
-                    val lastInsertId = episodesQueries.selectLastInsertedRowId().executeAsOne()
-                    episode.copy(id = lastInsertId)
-                }
+        return handler.await(inTransaction = true) { insertEpisodes(episodes) }
+    }
+
+    override suspend fun syncEpisodes(
+        episodesToAdd: List<Episode>,
+        episodesToUpdate: List<EpisodeUpdate>,
+        episodeIdsToDelete: List<Long>,
+    ): List<Episode> {
+        return handler.await(inTransaction = true) {
+            if (episodeIdsToDelete.isNotEmpty()) {
+                episodesQueries.removeEpisodesWithIds(episodeIdsToDelete)
             }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
-            emptyList()
+            val addedEpisodes = insertEpisodes(episodesToAdd)
+            updateEpisodes(episodesToUpdate)
+            addedEpisodes
+        }
+    }
+
+    private fun AnimeDatabase.insertEpisodes(episodes: List<Episode>): List<Episode> {
+        return episodes.map { episode ->
+            episodesQueries.insert(
+                episode.animeId,
+                episode.url,
+                episode.name,
+                episode.scanlator,
+                episode.seen,
+                episode.bookmark,
+                episode.lastSecondSeen,
+                episode.totalSeconds,
+                episode.episodeNumber,
+                episode.sourceOrder,
+                episode.dateFetch,
+                episode.dateUpload,
+                episode.version,
+                episode.summary,
+                episode.previewUrl,
+                episode.fillermark,
+            )
+            val lastInsertId = episodesQueries.selectLastInsertedRowId().executeAsOne()
+            episode.copy(id = lastInsertId)
         }
     }
 
@@ -53,38 +64,36 @@ class EpisodeRepositoryImpl(
     }
 
     private suspend fun partialUpdate(vararg episodeUpdates: EpisodeUpdate) {
-        handler.await(inTransaction = true) {
-            episodeUpdates.forEach { episodeUpdate ->
-                episodesQueries.update(
-                    animeId = episodeUpdate.animeId,
-                    url = episodeUpdate.url,
-                    name = episodeUpdate.name,
-                    scanlator = episodeUpdate.scanlator,
-                    seen = episodeUpdate.seen,
-                    bookmark = episodeUpdate.bookmark,
-                    lastSecondSeen = episodeUpdate.lastSecondSeen,
-                    totalSeconds = episodeUpdate.totalSeconds,
-                    episodeNumber = episodeUpdate.episodeNumber,
-                    sourceOrder = episodeUpdate.sourceOrder,
-                    dateFetch = episodeUpdate.dateFetch,
-                    dateUpload = episodeUpdate.dateUpload,
-                    episodeId = episodeUpdate.id,
-                    version = episodeUpdate.version,
-                    isSyncing = 0,
-                    summary = episodeUpdate.summary,
-                    previewUrl = episodeUpdate.previewUrl,
-                    fillermark = episodeUpdate.fillermark,
-                )
-            }
+        handler.await(inTransaction = true) { updateEpisodes(episodeUpdates.toList()) }
+    }
+
+    private fun AnimeDatabase.updateEpisodes(episodeUpdates: List<EpisodeUpdate>) {
+        episodeUpdates.forEach { episodeUpdate ->
+            episodesQueries.update(
+                animeId = episodeUpdate.animeId,
+                url = episodeUpdate.url,
+                name = episodeUpdate.name,
+                scanlator = episodeUpdate.scanlator,
+                seen = episodeUpdate.seen,
+                bookmark = episodeUpdate.bookmark,
+                lastSecondSeen = episodeUpdate.lastSecondSeen,
+                totalSeconds = episodeUpdate.totalSeconds,
+                episodeNumber = episodeUpdate.episodeNumber,
+                sourceOrder = episodeUpdate.sourceOrder,
+                dateFetch = episodeUpdate.dateFetch,
+                dateUpload = episodeUpdate.dateUpload,
+                episodeId = episodeUpdate.id,
+                version = episodeUpdate.version,
+                isSyncing = 0,
+                summary = episodeUpdate.summary,
+                previewUrl = episodeUpdate.previewUrl,
+                fillermark = episodeUpdate.fillermark,
+            )
         }
     }
 
     override suspend fun removeEpisodesWithIds(episodeIds: List<Long>) {
-        try {
-            handler.await { episodesQueries.removeEpisodesWithIds(episodeIds) }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
-        }
+        handler.await { episodesQueries.removeEpisodesWithIds(episodeIds) }
     }
 
     override suspend fun getEpisodeByAnimeId(animeId: Long): List<Episode> {

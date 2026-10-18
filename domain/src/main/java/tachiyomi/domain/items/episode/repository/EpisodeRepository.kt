@@ -8,6 +8,12 @@ interface EpisodeRepository {
 
     suspend fun addAllEpisodes(episodes: List<Episode>): List<Episode>
 
+    suspend fun syncEpisodes(
+        episodesToAdd: List<Episode>,
+        episodesToUpdate: List<EpisodeUpdate>,
+        episodeIdsToDelete: List<Long>,
+    ): List<Episode>
+
     suspend fun updateEpisode(episodeUpdate: EpisodeUpdate)
 
     suspend fun updateAllEpisodes(episodeUpdates: List<EpisodeUpdate>)

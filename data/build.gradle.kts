@@ -42,4 +42,7 @@ dependencies {
     implementation(projects.core.common)
 
     api(libs.bundles.sqldelight)
+
+    testImplementation(libs.bundles.test)
+    testImplementation(libs.sqldelight.sqlite.driver)
 }
