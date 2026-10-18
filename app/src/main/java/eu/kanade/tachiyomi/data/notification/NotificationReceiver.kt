@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.library.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateJob
 import eu.kanade.tachiyomi.data.updater.AppUpdateDownloadJob
@@ -124,6 +125,7 @@ class NotificationReceiver : BroadcastReceiver() {
                         context,
                         notificationId,
                         intent.getIntExtra(EXTRA_GROUP_ID, 0),
+                        intent.getStringExtra(EXTRA_NOTIFICATION_TAG),
                     )
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
@@ -140,6 +142,7 @@ class NotificationReceiver : BroadcastReceiver() {
                         context,
                         notificationId,
                         intent.getIntExtra(EXTRA_GROUP_ID, 0),
+                        intent.getStringExtra(EXTRA_NOTIFICATION_TAG),
                     )
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
@@ -156,6 +159,7 @@ class NotificationReceiver : BroadcastReceiver() {
                         context,
                         notificationId,
                         intent.getIntExtra(EXTRA_GROUP_ID, 0),
+                        intent.getStringExtra(EXTRA_NOTIFICATION_TAG),
                     )
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
@@ -172,6 +176,7 @@ class NotificationReceiver : BroadcastReceiver() {
                         context,
                         notificationId,
                         intent.getIntExtra(EXTRA_GROUP_ID, 0),
+                        intent.getStringExtra(EXTRA_NOTIFICATION_TAG),
                     )
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
@@ -410,6 +415,7 @@ class NotificationReceiver : BroadcastReceiver() {
         private const val ACTION_DISMISS_NOTIFICATION = "$ID.$NAME.ACTION_DISMISS_NOTIFICATION"
 
         private const val EXTRA_URI = "$ID.$NAME.URI"
+        const val EXTRA_NOTIFICATION_TAG = "notificationTag"
         private const val EXTRA_NOTIFICATION_ID = "$ID.$NAME.NOTIFICATION_ID"
         private const val EXTRA_GROUP_ID = "$ID.$NAME.EXTRA_GROUP_ID"
         private const val EXTRA_MANGA_ID = "$ID.$NAME.EXTRA_MANGA_ID"
@@ -555,33 +561,36 @@ class NotificationReceiver : BroadcastReceiver() {
             context: Context,
             notificationId: Int,
             groupId: Int? = null,
+            notificationTag: String? = null,
         ) {
-            /*
-            Group notifications always have at least 2 notifications:
-            - Group summary notification
-            - Single manga notification
-
-            If the single notification is dismissed by the system, ie by a user swipe or tapping on the notification,
-            it will auto dismiss the group notification if there's no other single updates.
-
-            When programmatically dismissing this notification, the group notification is not automatically dismissed.
-             */
-            val groupKey = context.notificationManager.activeNotifications.find {
-                it.id == notificationId
-            }?.groupKey
-
-            if (groupId != null && groupId != 0 && !groupKey.isNullOrEmpty()) {
-                val notifications = context.notificationManager.activeNotifications.filter {
-                    it.groupKey == groupKey
-                }
-
-                if (notifications.size == 2) {
-                    context.cancelNotification(groupId)
-                    return
-                }
+            val expectedGroup = when (groupId) {
+                Notifications.ID_NEW_CHAPTERS -> Notifications.GROUP_NEW_CHAPTERS
+                Notifications.ID_NEW_EPISODES -> Notifications.GROUP_NEW_EPISODES
+                else -> null
+            }
+            val activeNotifications = context.notificationManager.activeNotifications
+            val notification = activeNotifications.find {
+                it.id == notificationId &&
+                    it.tag == notificationTag &&
+                    (expectedGroup == null || it.notification.group == expectedGroup)
+            } ?: activeNotifications.find {
+                // Notifications posted before tags were introduced still need to be dismissible.
+                notificationTag != null &&
+                    expectedGroup != null &&
+                    it.id == notificationId &&
+                    it.tag == null &&
+                    it.notification.group == expectedGroup
             }
 
-            context.cancelNotification(notificationId)
+            if (notification == null && expectedGroup != null) return
+
+            context.cancelNotification(if (notification != null) notification.tag else notificationTag, notificationId)
+            if (notification != null && groupId != null && groupId != 0) {
+                val groupNotifications = activeNotifications.filter { it.groupKey == notification.groupKey }
+                if (groupNotifications.size == 2) {
+                    context.cancelNotification(groupId)
+                }
+            }
         }
 
         /**
@@ -614,6 +623,7 @@ class NotificationReceiver : BroadcastReceiver() {
          */
         internal fun openEpisodePendingActivity(context: Context, anime: Anime, episode: Episode): PendingIntent {
             val newIntent = PlayerActivity.newIntent(context, anime.id, episode.id)
+                .setData("aniyomi://library-update/${LibraryUpdateType.ANIME.notificationTag(anime.id)}".toUri())
             return PendingIntent.getActivity(
                 context,
                 anime.id.hashCode(),
@@ -634,6 +644,8 @@ class NotificationReceiver : BroadcastReceiver() {
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     .putExtra(Constants.ANIME_EXTRA, anime.id)
                     .putExtra("notificationId", anime.id.hashCode())
+                    .putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.ANIME.notificationTag(anime.id))
+                    .setData("aniyomi://library-update/${LibraryUpdateType.ANIME.notificationTag(anime.id)}".toUri())
                     .putExtra("groupId", groupId)
             return PendingIntent.getActivity(
                 context,
@@ -660,6 +672,8 @@ class NotificationReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_CHAPTER_URL, episodes.map { it.url }.toTypedArray())
                 putExtra(EXTRA_MANGA_ID, anime.id)
                 putExtra(EXTRA_NOTIFICATION_ID, anime.id.hashCode())
+                putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.ANIME.notificationTag(anime.id))
+                data = "aniyomi://library-update/${LibraryUpdateType.ANIME.notificationTag(anime.id)}".toUri()
                 putExtra(EXTRA_GROUP_ID, groupId)
             }
             return PendingIntent.getBroadcast(
@@ -679,6 +693,7 @@ class NotificationReceiver : BroadcastReceiver() {
          */
         internal fun openChapterPendingActivity(context: Context, manga: Manga, chapter: Chapter): PendingIntent {
             val newIntent = ReaderActivity.newIntent(context, manga.id, chapter.id)
+                .setData("aniyomi://library-update/${LibraryUpdateType.MANGA.notificationTag(manga.id)}".toUri())
             return PendingIntent.getActivity(
                 context,
                 manga.id.hashCode(),
@@ -699,6 +714,8 @@ class NotificationReceiver : BroadcastReceiver() {
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     .putExtra(Constants.MANGA_EXTRA, manga.id)
                     .putExtra("notificationId", manga.id.hashCode())
+                    .putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.MANGA.notificationTag(manga.id))
+                    .setData("aniyomi://library-update/${LibraryUpdateType.MANGA.notificationTag(manga.id)}".toUri())
                     .putExtra("groupId", groupId)
             return PendingIntent.getActivity(
                 context,
@@ -725,6 +742,8 @@ class NotificationReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_CHAPTER_URL, chapters.map { it.url }.toTypedArray())
                 putExtra(EXTRA_MANGA_ID, manga.id)
                 putExtra(EXTRA_NOTIFICATION_ID, manga.id.hashCode())
+                putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.MANGA.notificationTag(manga.id))
+                data = "aniyomi://library-update/${LibraryUpdateType.MANGA.notificationTag(manga.id)}".toUri()
                 putExtra(EXTRA_GROUP_ID, groupId)
             }
             return PendingIntent.getBroadcast(
@@ -752,6 +771,8 @@ class NotificationReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_CHAPTER_URL, chapters.map { it.url }.toTypedArray())
                 putExtra(EXTRA_MANGA_ID, manga.id)
                 putExtra(EXTRA_NOTIFICATION_ID, manga.id.hashCode())
+                putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.MANGA.notificationTag(manga.id))
+                data = "aniyomi://library-update/${LibraryUpdateType.MANGA.notificationTag(manga.id)}".toUri()
                 putExtra(EXTRA_GROUP_ID, groupId)
             }
             return PendingIntent.getBroadcast(
@@ -779,6 +800,8 @@ class NotificationReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_CHAPTER_URL, episodes.map { it.url }.toTypedArray())
                 putExtra(EXTRA_MANGA_ID, anime.id)
                 putExtra(EXTRA_NOTIFICATION_ID, anime.id.hashCode())
+                putExtra(EXTRA_NOTIFICATION_TAG, LibraryUpdateType.ANIME.notificationTag(anime.id))
+                data = "aniyomi://library-update/${LibraryUpdateType.ANIME.notificationTag(anime.id)}".toUri()
                 putExtra(EXTRA_GROUP_ID, groupId)
             }
             return PendingIntent.getBroadcast(

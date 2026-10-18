@@ -63,7 +63,7 @@ class MangaUpdatesScreenModel(
     private val _events: Channel<Event> = Channel(Int.MAX_VALUE)
     val events: Flow<Event> = _events.receiveAsFlow()
 
-    val lastUpdated by libraryPreferences.lastUpdatedTimestamp().asState(screenModelScope)
+    val lastUpdated by libraryPreferences.mangaLastUpdatedTimestamp().asState(screenModelScope)
 
     // First and last selected index in list
     private val selectedPositions: Array<Int> = arrayOf(-1, -1)
@@ -357,7 +357,7 @@ class MangaUpdatesScreenModel(
     }
 
     fun resetNewUpdatesCount() {
-        libraryPreferences.newMangaUpdatesCount().set(0)
+        libraryPreferences.resetNewMangaUpdatesCount()
     }
 
     @Immutable

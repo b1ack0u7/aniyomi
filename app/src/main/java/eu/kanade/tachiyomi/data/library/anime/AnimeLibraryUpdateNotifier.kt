@@ -19,6 +19,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloader
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -119,7 +120,7 @@ class AnimeLibraryUpdateNotifier(
         }
 
         context.notify(
-            Notifications.ID_LIBRARY_PROGRESS,
+            Notifications.ID_ANIME_LIBRARY_PROGRESS,
             progressNotificationBuilder
                 .setProgress(total, current, false)
                 .build(),
@@ -128,7 +129,7 @@ class AnimeLibraryUpdateNotifier(
 
     fun showQueueSizeWarningNotification() {
         context.notify(
-            Notifications.ID_LIBRARY_SIZE_WARNING,
+            Notifications.ID_ANIME_LIBRARY_SIZE_WARNING,
             Notifications.CHANNEL_LIBRARY_PROGRESS,
         ) {
             setContentTitle(context.stringResource(MR.strings.label_warning))
@@ -157,7 +158,7 @@ class AnimeLibraryUpdateNotifier(
         }
 
         context.notify(
-            Notifications.ID_LIBRARY_SIZE_WARNING,
+            Notifications.ID_ANIME_LIBRARY_SIZE_WARNING,
             Notifications.CHANNEL_LIBRARY_PROGRESS,
         ) {
             setContentTitle(context.stringResource(MR.strings.label_warning))
@@ -183,7 +184,7 @@ class AnimeLibraryUpdateNotifier(
         }
 
         context.notify(
-            Notifications.ID_LIBRARY_ERROR,
+            Notifications.ID_ANIME_LIBRARY_ERROR,
             Notifications.CHANNEL_LIBRARY_ERROR,
         ) {
             setContentTitle(context.stringResource(MR.strings.notification_update_error, failed))
@@ -246,6 +247,7 @@ class AnimeLibraryUpdateNotifier(
                 context.notify(
                     updates.map { (anime, episodes) ->
                         NotificationManagerCompat.NotificationWithIdAndTag(
+                            LibraryUpdateType.ANIME.notificationTag(anime.id),
                             anime.id.hashCode(),
                             createNewEpisodesNotification(anime, episodes),
                         )
@@ -307,22 +309,20 @@ class AnimeLibraryUpdateNotifier(
                 addAction(
                     android.R.drawable.stat_sys_download_done,
                     context.stringResource(MR.strings.action_download),
-                    NotificationReceiver.downloadEpisodesPendingBroadcast(
-                        context,
-                        anime,
-                        episodes,
-                        Notifications.ID_NEW_CHAPTERS,
-                    ),
+                    downloadEpisodesIntent(anime, episodes),
                 )
             }
         }.build()
     }
 
+    internal fun downloadEpisodesIntent(anime: Anime, episodes: Array<Episode>): PendingIntent =
+        NotificationReceiver.downloadEpisodesPendingBroadcast(context, anime, episodes, Notifications.ID_NEW_EPISODES)
+
     /**
      * Cancels the progress notification.
      */
     fun cancelProgressNotification() {
-        context.cancelNotification(Notifications.ID_LIBRARY_PROGRESS)
+        context.cancelNotification(Notifications.ID_ANIME_LIBRARY_PROGRESS)
     }
 
     private suspend fun getAnimeIcon(anime: Anime): Bitmap? {

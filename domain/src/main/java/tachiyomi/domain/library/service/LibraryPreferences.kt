@@ -4,6 +4,7 @@ import aniyomi.domain.anime.SeasonDisplayMode
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.preference.getEnum
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.manga.model.Manga
@@ -14,6 +15,9 @@ import tachiyomi.domain.library.model.LibraryDisplayMode
 class LibraryPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
+
+    private val mangaUpdatesCountLock = Any()
+    private val animeUpdatesCountLock = Any()
 
     fun displayMode() = preferenceStore.getObject(
         "pref_display_mode_library",
@@ -36,7 +40,16 @@ class LibraryPreferences(
         AnimeLibrarySort.Serializer::deserialize,
     )
 
-    fun lastUpdatedTimestamp() = preferenceStore.getLong(Preference.appStateKey("library_update_last_timestamp"), 0L)
+    fun mangaLastUpdatedTimestamp() = preferenceStore.getLong(
+        Preference.appStateKey("manga_library_update_last_success_timestamp"),
+        0L,
+    )
+
+    fun animeLastUpdatedTimestamp() = preferenceStore.getLong(
+        Preference.appStateKey("anime_library_update_last_success_timestamp"),
+        0L,
+    )
+
     fun autoUpdateInterval() = preferenceStore.getInt("pref_library_update_interval_key", 0)
 
     fun autoUpdateDeviceRestrictions() = preferenceStore.getStringSet(
@@ -147,6 +160,22 @@ class LibraryPreferences(
 
     fun newMangaUpdatesCount() = preferenceStore.getInt("library_unread_updates_count", 0)
     fun newAnimeUpdatesCount() = preferenceStore.getInt("library_unseen_updates_count", 0)
+
+    fun incrementNewMangaUpdatesCount(count: Int) = synchronized(mangaUpdatesCountLock) {
+        newMangaUpdatesCount().getAndSet { it + count }
+    }
+
+    fun incrementNewAnimeUpdatesCount(count: Int) = synchronized(animeUpdatesCountLock) {
+        newAnimeUpdatesCount().getAndSet { it + count }
+    }
+
+    fun resetNewMangaUpdatesCount() = synchronized(mangaUpdatesCountLock) {
+        newMangaUpdatesCount().set(0)
+    }
+
+    fun resetNewAnimeUpdatesCount() = synchronized(animeUpdatesCountLock) {
+        newAnimeUpdatesCount().set(0)
+    }
 
     // Mixture Category
 

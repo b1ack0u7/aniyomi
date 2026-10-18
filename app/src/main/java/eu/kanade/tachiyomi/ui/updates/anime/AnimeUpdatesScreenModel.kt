@@ -65,7 +65,7 @@ class AnimeUpdatesScreenModel(
     private val _events: Channel<Event> = Channel(Int.MAX_VALUE)
     val events: Flow<Event> = _events.receiveAsFlow()
 
-    val lastUpdated by libraryPreferences.lastUpdatedTimestamp().asState(screenModelScope)
+    val lastUpdated by libraryPreferences.animeLastUpdatedTimestamp().asState(screenModelScope)
 
     val useExternalDownloader = downloadPreferences.useExternalDownloader().get()
 
@@ -390,7 +390,7 @@ class AnimeUpdatesScreenModel(
     }
 
     fun resetNewUpdatesCount() {
-        libraryPreferences.newAnimeUpdatesCount().set(0)
+        libraryPreferences.resetNewAnimeUpdatesCount()
     }
 
     @Immutable
