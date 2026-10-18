@@ -13,16 +13,33 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 ## Unreleased
 ### Added
 
+- Add persistent manga and anime library update retries for transient connection failures and HTTP 429/5xx responses, limited to two additional attempts per title and respecting source cooldowns, Retry-After and automatic update restrictions ([@b1ack0u7](https://github.com/b1ack0u7))
+- Add smart manga downloads with request pacing and batch rests shared across all manga from the same source, automatic retries that honor server Retry-After headers, persistent waits, and source-wide pauses for unresolved Cloudflare challenges ([@b1ack0u7](https://github.com/b1ack0u7))
+- Add Fast, Default and Slow download profiles, bounded manual timing and batch controls, a custom-settings indicator, and an action to restore the recommended configuration ([@b1ack0u7](https://github.com/b1ack0u7))
 - Add per-source Retry and Open in WebView actions to sources that fail during global search, so a Cloudflare or other failure can be solved in the WebView and retried in place without losing the rest of the results, on both sides ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ### Improved
 
+- Coordinate library updates and download source operations through shared per-source pacing and cooldowns, with independent manga and anime state and no automatic retries while a Cloudflare challenge remains unresolved ([@b1ack0u7](https://github.com/b1ack0u7))
+- Preserve network exception types and recognize wrapped DNS, offline, HTTP and Cloudflare errors, with clearer library update reports and an updated troubleshooting link ([@b1ack0u7](https://github.com/b1ack0u7))
+- Translate all smart manga download settings, profiles, explanations and waiting notifications into Spanish ([@b1ack0u7](https://github.com/b1ack0u7))
 - Cancel the queued download of an episode while it is being streamed and requeue it once the player closes, so an episode is no longer downloaded and played at the same time ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ### Fixed
 
+- Make chapter and episode synchronization transactional so a failed write cannot leave original entries, reading/watching progress, bookmarks or history deleted, and propagate failures instead of reporting an empty success ([@b1ack0u7](https://github.com/b1ack0u7))
+- Cancel pending source requests when a library update is stopped and start already queued automatic downloads after an interrupted run, on both sides ([@b1ack0u7](https://github.com/b1ack0u7))
+- Keep automatic download starts from releasing Cloudflare challenges, overriding manual pauses or retrying permanent errors; preserve pending anime downloads across connection loss and queue restoration ([@b1ack0u7](https://github.com/b1ack0u7))
+- Separate manga and anime update notifications and error reports, distinguish entries with colliding database IDs, and make the anime download notification dismiss the correct group ([@b1ack0u7](https://github.com/b1ack0u7))
+- Keep library update timestamps separate for manga and anime, record them only after successful runs, and avoid losing new-item counts when sources finish concurrently ([@b1ack0u7](https://github.com/b1ack0u7))
+- Retry non-favorite anime seasons through their library parent and propagate transient source and Cloudflare failures from download discovery without changing the player's fallback behavior ([@b1ack0u7](https://github.com/b1ack0u7))
+- Keep short manga download rests active so Android background-job batching does not delay the next chapter, preserve permanent errors during automatic resumption, and cancel scheduled resumes when downloads are manually paused or cleared ([@b1ack0u7](https://github.com/b1ack0u7))
 - Fix the Cloudflare bypass failing on sources that present a challenge, by detecting it through the official `cf-mitigated` header and the WebView's HTTP error callback instead of treating any 403/503 as a solvable challenge, on both sides. Ported from Mihon ([@b1ack0u7](https://github.com/b1ack0u7))
 - Fix ffmpeg-based anime downloads freezing indefinitely when the connection drops, by reconnecting on network errors and bailing out after 30 seconds of no I/O so the download retries instead of hanging ([@b1ack0u7](https://github.com/b1ack0u7))
+
+### Other
+
+- Add regression coverage for transactional synchronization, cancellation, notifications, retry persistence and limits, source coordination, automatic download starts and error diagnostics ([@b1ack0u7](https://github.com/b1ack0u7))
 
 ## [v0.22.0] - 2026-08-18
 ### Improved
