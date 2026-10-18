@@ -1,11 +1,12 @@
 # Releasing
 
 Releases are cut from a git tag. Pushing a `v*` tag to `origin` makes
-`.github/workflows/build_push.yml` build `assembleRelease -Penable-updater`, sign the
-five APKs (universal + four ABIs), and open a **draft** GitHub release with the notes
+`.github/workflows/release.yml` build `assembleRelease -Penable-updater`, sign the
+five APKs (universal + four ABIs), and publish a GitHub release automatically with the notes
 taken from `CHANGELOG.md` and a SHA-256 table appended.
 
-Nothing is published automatically — the draft has to be reviewed and published by hand.
+Pushing the tag is the publication action: obtain release authorization before pushing it.
+Review the notes and CI on the release PR first; the workflow uses `draft: false`.
 
 ## One-time setup
 
@@ -69,7 +70,7 @@ cannot find the `-signed.apk` files.
 
 Two places name the repository and must point at this fork, not upstream:
 
-- `.github/workflows/build_push.yml` — the five `github.repository == '…'` conditions
+- `.github/workflows/release.yml` — the `github.repository == '…'` conditions
   that gate signing, release notes and release creation.
 - `app/src/main/java/eu/kanade/tachiyomi/data/updater/AppUpdateChecker.kt` — `GITHUB_REPO`,
   which is where the in-app updater looks for new releases.
@@ -115,45 +116,116 @@ only after uninstalling, which is exactly what this build is meant to catch earl
 
 ## Cutting a release
 
-Work lands on `dev` and reaches `main` through a pull request; the tag is created on
-`main` afterwards, on the merge commit. `scripts/release/release.py` does the repeatable part:
-bumps the version, rolls the changelog, runs the CI gates locally, then commits — and
-tags too, unless `--no-tag` is passed.
+Task PRs land on `dev`; only a release PR from this repository's `dev` branch reaches
+`main`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for cloning, task branches and handoffs.
+The developer or another release maintainer can perform the following steps once authorized.
+
+### Prepare the version through dev
+
+Start with an updated, clean `dev`, then prepare the bump on a task branch. Replace
+`1.1.0` with the next three-component version. Write user-facing notes under
+`## Unreleased` in `CHANGELOG.md` before running the script (and commit them first if needed).
 
 ```sh
-# On dev, with the release notes already written under "## Unreleased" in CHANGELOG.md.
-
-# 1. See what would change without touching anything.
-scripts/release/release.py 1.1.0 --no-tag --dry-run
-
-# 2. Commit the bump and push dev (drop --push to review the commit first).
-scripts/release/release.py 1.1.0 --no-tag --push
-
-# 3. Open the pull request into main and wait for "PR build check" to pass.
-gh pr create --base main --head dev --title "chore: Release v1.1.0" --body "See CHANGELOG.md"
-
-# 4. Merge it with a MERGE COMMIT — not squash, not rebase (see below).
-gh pr merge --merge
-
-# 5. Tag the merge commit; this is what triggers the build and the draft release.
-git switch main && git pull
-git tag -a v1.1.0 -m "Aniyomi v1.1.0"
-git push origin v1.1.0
-
-# 6. Put dev back on top of main (fast-forward, no new commit).
-git switch dev && git merge main && git push origin dev
+git fetch origin
+git switch dev
+git merge --ff-only origin/dev
+git switch -c codex/release-1.1.0
+python3 scripts/release/release.py 1.1.0 --no-tag --date YYYY-MM-DD --dry-run
+python3 scripts/release/release.py 1.1.0 --no-tag --date YYYY-MM-DD --push
 ```
 
-The script refuses to run on a dirty worktree, on an empty `## Unreleased` section, if the
-tag already exists locally or on `origin`, or if the new version is not strictly greater
-than the current one.
+Replace `YYYY-MM-DD` with the intended release date. Without `--date` the script uses UTC.
+It bumps `versionCode` by one, rolls the changelog, runs `spotlessCheck` and
+`testReleaseUnitTest`, and commits the two release files. It refuses dirty worktrees,
+empty release notes, duplicate tags and non-increasing versions. `--version-code N`
+overrides the code; `--skip-checks` is only appropriate when the same checks have already
+passed on that code, and must be disclosed in the PR. Always use `--no-tag` in this flow.
 
-`versionCode` is bumped by one; pass `--version-code N` to override. `--skip-checks` skips
-`spotlessCheck` and `testReleaseUnitTest`, which the CI runs anyway — but a failure there
-means a wasted tag, so prefer to let them run.
+Write `/tmp/release-preparation.md` with the proposed version, notes and validation, then:
 
-Without a pull request in the way — releasing straight off a branch — drop `--no-tag` and
-the script commits, tags and (with `--push`) pushes both in one go.
+```sh
+gh pr create --repo b1ack0u7/aniyomi --base dev --head codex/release-1.1.0 --title "chore: Prepare v1.1.0" --body-file /tmp/release-preparation.md
+```
+
+Wait for `CI / PR checks` and merge the preparation PR into `dev`. Freeze further changes
+on `dev` until the release PR is merged and the branches are synchronized. New pushes to
+`dev` are included in the open release PR and must pass its checks again.
+
+### Promote dev to main and publish
+
+Write `/tmp/release-pr.md` with the release summary, validation, version and publication
+plan. A handoff to another agent should also include the preparation PR and exact `dev` SHA.
+
+```sh
+gh pr create --repo b1ack0u7/aniyomi --base main --head dev --title "chore: Release v1.1.0" --body-file /tmp/release-pr.md
+```
+
+The `secure-main` ruleset requires GitHub Actions `PR checks`, an up-to-date branch, and
+a PR merged with a merge commit. It blocks deletion and force-pushes, with no administrator
+bypass and no requirement for another approving reviewer. CI rejects PRs to `main` that
+come from a branch other than this repository's `dev`. Do not rename the check without
+updating the ruleset. Its versioned definition is [.github/rulesets/main.json](../../.github/rulesets/main.json).
+
+After CI passes and the maintainer authorizes the release, replace `PR_NUMBER` below
+with the release PR number. `--match-head-commit` prevents merging a different revision
+if `dev` changes after the check:
+
+```sh
+gh pr checks PR_NUMBER --repo b1ack0u7/aniyomi --watch
+release_head=$(gh pr view PR_NUMBER --repo b1ack0u7/aniyomi --json headRefOid --jq .headRefOid)
+gh pr merge PR_NUMBER --repo b1ack0u7/aniyomi --merge --match-head-commit "$release_head"
+git fetch origin
+git switch main
+git merge --ff-only origin/main
+release_merge=$(gh pr view PR_NUMBER --repo b1ack0u7/aniyomi --json mergeCommit --jq .mergeCommit.oid)
+test "$(git rev-parse HEAD)" = "$release_merge" && git tag -a v1.1.0 "$release_merge" -m "Aniyomi v1.1.0"
+git push origin refs/tags/v1.1.0
+```
+
+Stop if any command fails. Verify `versionName`, `versionCode` and the changelog section
+on the merged commit before creating the tag. Never move or force-push a published tag.
+The tag workflow repeats validation and builds, signs and publishes all five APK variants.
+
+### Synchronize the long-lived branches
+
+Immediately after tagging, with `dev` still frozen:
+
+```sh
+git switch dev
+git merge --ff-only origin/dev
+git merge --ff-only main
+git push origin dev
+git rev-parse main dev origin/main origin/dev
+```
+
+All four SHAs should match the release merge commit. If fast-forward fails, stop and
+inspect concurrent changes; do not reset, force-push or create an extra merge commit.
+`dev` remains unprotected specifically to permit this maintainer synchronization; ordinary
+changes still go through task PRs and successful CI. Leave the checkout on `dev`.
+
+### Which workflow runs
+
+| Event | Workflow | Work performed |
+| --- | --- | --- |
+| PR opened/updated targeting `dev` | CI / PR checks | Format, release unit tests, alignment-checker regression tests |
+| PR opened/updated targeting `main` | CI / PR checks | Same validation plus verification that the source is this repository's `dev` |
+| Manual CI dispatch | CI / PR checks | Same validation on the selected ref |
+| Branch push, including post-release fast-forward to `dev` | None | PR validation already ran before merge |
+| Push of a `v*` tag | Release / Publish APKs | Validation, release build, signing, APK upload and publication |
+
+PR CI checks GitHub's proposed merge result, so it validates integration with the target
+branch. There are no path filters that leave required checks pending for documentation PRs.
+PR CI has read-only repository permissions; only the tag workflow can publish releases.
+Previously `build_push.yml` listened to every push to `dev`, so synchronizing `main` back
+into `dev` started another run even when the source files were identical. The PR-only
+trigger removes that duplicate branch run.
+
+To restore the live main ruleset from its versioned definition (repository admin required):
+
+```sh
+gh api --method PUT repos/b1ack0u7/aniyomi/rulesets/20164691 --input .github/rulesets/main.json
+```
 
 ### Why a merge commit, and why tag afterwards
 
@@ -177,8 +249,8 @@ that assumption, so a mismatch makes the "view release" link inside the app 404.
 
 ### After pushing the tag
 
-1. Watch the run under the repo's **Actions** tab (~15–25 min; R8 is on).
-2. Open the draft release, check the notes and the checksum table, then **Publish**.
+1. Watch the **Release** run under the repo's **Actions** tab until it succeeds; R8 can take time.
+2. Open the published release and check that all five APKs, notes and the checksum table are present.
 3. Install the universal APK on a device and confirm it upgrades over the previous build
    rather than asking for an uninstall — if it asks, the signing key changed.
 

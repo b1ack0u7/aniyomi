@@ -1,22 +1,20 @@
-name: CI
+name: Release
 
 permissions:
   contents: write
 
 on:
   push:
-    branches:
-      - dev
     tags:
       - v*
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
-    name: Build app
+    name: Publish APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -35,24 +33,22 @@ jobs:
       - name: Check code format
         run: ./gradlew spotlessCheck
 
-      # Only tags need the packaged APKs, and R8 makes this the slowest step by far.
-      # Branch pushes stop at the format and test gates, which is where the signal is.
-      - name: Build app
-        if: startsWith(github.ref, 'refs/tags/')
-        run: ./gradlew assembleRelease -Penable-updater
-
       - name: Run unit tests
         run: ./gradlew testReleaseUnitTest
 
+      - name: Test APK alignment checker
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_check_16kb_alignment.py' -v
+
+      - name: Build app
+        run: ./gradlew assembleRelease -Penable-updater
+
       - name: Upload APK
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: arm64-v8a-${{ github.sha }}
           path: app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
 
       - name: Upload mapping
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mapping-${{ github.sha }}

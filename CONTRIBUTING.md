@@ -5,6 +5,43 @@ Looking to report an issue/bug or make a feature request? Please refer to the [R
 Thanks for your interest in contributing to Aniyomi!
 
 
+# Fork development workflow
+
+This fork uses task branches → `dev` → `main`. Start from the fork's development branch:
+
+```sh
+git clone --branch dev git@github.com:b1ack0u7/aniyomi.git
+cd aniyomi
+git switch -c codex/my-change
+```
+
+For an existing clone, use `git fetch origin`, `git switch dev` and
+`git merge --ff-only origin/dev` before creating the task branch. Preserve local changes;
+never reset a shared branch to make it match the remote.
+
+Implement the change, add relevant coverage and user-facing `CHANGELOG.md` entries under
+`Unreleased`, and run the affected checks listed in [AGENTS.md](AGENTS.md). When authorized
+to commit and push, use a Conventional Commit and create a PR targeting `dev`:
+
+```sh
+git push -u origin codex/my-change
+gh pr create --repo b1ack0u7/aniyomi --base dev --head codex/my-change --title "fix: Describe the change" --body-file /tmp/pr-body.md
+```
+
+Write the body file first with the problem, behavior, anime/manga impact and validation.
+Wait for `CI / PR checks` to pass on the latest PR revision, resolve conflicts and merge
+the task PR. Do not use `main` as the target for individual changes.
+
+CI validates PRs targeting both long-lived branches. `main` enforces the successful
+`PR checks` result, an up-to-date branch and merge commits, including for administrators.
+`dev` remains unprotected to permit the release maintainer's fast-forward synchronization;
+contributors and agents still use PRs and wait for CI.
+
+The same agent or another release maintainer can then follow
+[the release procedure](scripts/release/releasing.md). For a handoff, provide the task PR,
+current `dev` commit, release notes, proposed version and checks already run. Merging work
+into `dev` does not itself authorize publishing a release.
+
 # Code contributions
 
 Pull requests are welcome!

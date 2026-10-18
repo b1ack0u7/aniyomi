@@ -2,7 +2,7 @@
 """Prepare a release: bump the version, roll the changelog, commit and tag.
 
 Pushing is opt-in (--push). Once the tag reaches GitHub, the CI workflow in
-.github/workflows/build_push.yml builds, signs and publishes a draft release
+.github/workflows/release.yml builds, signs and publishes a release
 with the five APKs and the notes taken from CHANGELOG.md.
 
 When the release goes through a pull request into main, run it with --no-tag: the
@@ -219,7 +219,7 @@ def main() -> None:
             print(f'\nPushed {branch}. Open the pull request; tag {tag} on main once it is merged.')
         else:
             run(['git', 'push', 'origin', tag])
-            print(f'\nPushed {tag}. CI will build, sign and open a draft release.')
+            print(f'\nPushed {tag}. CI will build, sign and publish the release.')
     elif args.no_tag:
         print(
             f'\nCreated the bump commit for {tag} locally. Push it and open the pull request with:\n'

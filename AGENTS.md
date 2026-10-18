@@ -16,6 +16,15 @@ This checkout is a customized fork: `app/build.gradle.kts` currently uses applic
 - Run checks appropriate to the change and report what ran, what failed, and any environment blockers. Documentation-only changes need diff and reference checks, not an Android build.
 - Leave changes unstaged and uncommitted unless the user requests commits. Use the commit helper only when commit creation is requested.
 
+## Branches, pull requests and releases
+
+- Start a task branch from updated `origin/dev`, using the `codex/` prefix. A fresh clone can use `git clone --branch dev git@github.com:b1ack0u7/aniyomi.git`; then create the task branch. Never work from `main` for ordinary changes.
+- Send task PRs to `dev`, describe anime/manga impact and validation, and wait for `PR checks` before merging. Keep `CHANGELOG.md` entries under `Unreleased` for user-visible changes. Leave commits/pushes/merges to the user unless authorized.
+- `main` is the release branch: only PRs from this repository's `dev` branch pass CI. Its active ruleset requires an up-to-date PR, successful GitHub Actions `PR checks`, and a merge commit; administrators cannot bypass it. No additional approving reviewer is required.
+- `dev` has PR validation but is not branch-protected, to allow the release maintainer's post-release fast-forward from `main`. Ordinary work still uses PRs; do not treat direct pushes as the normal development workflow.
+- Follow [the release procedure](scripts/release/releasing.md): prepare version/changelog on a task branch into `dev`, then open `dev` → `main`, wait for CI and release authorization, merge with `--merge`, and tag that exact main merge commit. A developer can hand the release to another agent by supplying the merged task PR, `dev` SHA, proposed version and validation results.
+- After tagging, fast-forward local `main` and `dev` to the same merge commit and push `dev`. Do not squash/rebase the release PR, delete either long-lived branch, or create a second synchronization merge commit. Synchronizing the branches does not start CI; pushing the tag starts Release.
+
 ## Build and validation
 
 Use the checked-in Gradle wrapper (currently 8.13). The daemon toolchain is pinned to Adoptium JDK 17 in `gradle/gradle-daemon-jvm.properties`. Android SDK setup belongs in the untracked `local.properties` or the local environment; SDK, build-tools, and NDK requirements are in `buildSrc/src/main/kotlin/mihon/buildlogic/AndroidConfig.kt`. Do not commit machine-specific SDK paths or signing credentials.
@@ -34,7 +43,7 @@ Tests run on the JUnit 5 platform (`junit-jupiter` + `kotest-assertions` + `mock
 
 Start with the affected module or test class; use `spotlessCheck` and `testReleaseUnitTest` for changes that cross modules or before release validation. Reader/player behavior needs device or emulator checks when unit tests cannot cover it.
 
-CI (`.github/workflows/build_push.yml`) runs on pushes to `dev` and `v*` tags. Both run `spotlessCheck` and `testReleaseUnitTest`; only tags build APKs with `assembleRelease -Penable-updater` and run the artifact upload steps. Signing and publication are additionally restricted to the fork repository.
+CI (`.github/workflows/ci.yml`) runs for pull requests targeting `dev` or `main`, and manual dispatches. Its `PR checks` job runs `spotlessCheck`, `testReleaseUnitTest` and the APK alignment checker regression tests. It tests the PR merge result; every PR runs, including documentation changes. Branch pushes do not trigger CI. The separate tag-only `.github/workflows/release.yml` repeats the checks, builds APKs with `assembleRelease -Penable-updater`, and signs and publishes them automatically in the fork repository.
 
 Useful Gradle properties:
 
