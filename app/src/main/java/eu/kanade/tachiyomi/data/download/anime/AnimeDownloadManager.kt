@@ -44,27 +44,24 @@ class AnimeDownloadManager(
     private val getCategories: GetAnimeCategories = Injekt.get(),
     private val sourceManager: AnimeSourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val downloader: AnimeDownloader = AnimeDownloader(context, provider, cache, sourceManager),
+    private val pendingDeleter: AnimeDownloadPendingDeleter = AnimeDownloadPendingDeleter(context),
 ) {
-
-    /**
-     * Downloader whose only task is to download episodes.
-     */
-    private val downloader = AnimeDownloader(context, provider, cache, sourceManager)
 
     val isRunning: Boolean
         get() = downloader.isRunning
-
-    /**
-     * Queue to delay the deletion of a list of episodes until triggered.
-     */
-    private val pendingDeleter = AnimeDownloadPendingDeleter(context)
 
     val queueState
         get() = downloader.queueState
 
     // For use by DownloadService only
-    fun downloaderStart() = downloader.start()
+    suspend fun awaitRestored() = downloader.awaitRestored()
+
+    fun downloaderStart(automatic: Boolean = false, owner: String? = null) = downloader.start(automatic, owner)
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
+    fun downloaderPrepareAutomaticStart() = downloader.prepareAutomaticStart()
+    fun suspendForNetwork(reason: String) = downloader.suspendForNetwork(reason)
+    fun onWorkerStopped(owner: String) = downloader.onWorkerStopped(owner)
 
     val isDownloaderRunning
         get() = AnimeDownloadJob.isRunningFlow(context)
@@ -73,6 +70,7 @@ class AnimeDownloadManager(
      * Tells the downloader to begin downloads.
      */
     fun startDownloads() {
+        downloader.resumeChallenges()
         if (downloader.isRunning) return
 
         if (AnimeDownloadJob.isRunning(context)) {
@@ -82,10 +80,21 @@ class AnimeDownloadManager(
         }
     }
 
+    fun startDownloadsAutomatically() {
+        if (downloader.isRunning || !downloader.prepareAutomaticStart()) return
+
+        if (AnimeDownloadJob.isRunning(context)) {
+            downloader.start(automatic = true)
+        } else {
+            AnimeDownloadJob.start(context, automatic = true)
+        }
+    }
+
     /**
      * Tells the downloader to pause downloads.
      */
     fun pauseDownloads() {
+        downloader.pauseByUser()
         downloader.stop()
     }
 
@@ -158,7 +167,7 @@ class AnimeDownloadManager(
             addAll(0, downloads)
             reorderQueue(this)
         }
-        if (!AnimeDownloadJob.isRunning(context)) startDownloads()
+        if (!AnimeDownloadJob.isRunning(context)) startDownloadsAutomatically()
     }
 
     /**
@@ -324,7 +333,7 @@ class AnimeDownloadManager(
             if (queueState.value.isEmpty()) {
                 downloader.stop()
             } else if (queueState.value.isNotEmpty()) {
-                downloader.start()
+                downloader.start(automatic = true)
             }
         }
     }

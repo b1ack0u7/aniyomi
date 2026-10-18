@@ -20,16 +20,20 @@ import eu.kanade.tachiyomi.animesource.UnmeteredSource
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.data.download.DownloadStartState
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.library.anime.AnimeLibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.data.torrent.service.TorrentServerService
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.ui.player.loader.EpisodeLoader
 import eu.kanade.tachiyomi.ui.player.loader.HosterLoader
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.toFFmpegString
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,6 +94,13 @@ class AnimeDownloader(
      * Store for persisting downloads across restarts.
      */
     private val store = AnimeDownloadStore(context)
+    private val sourceRequests: SourceRequestCoordinator by lazy { Injekt.get() }
+    private val startState = DownloadStartState(
+        context.getSharedPreferences("anime_download_state", Context.MODE_PRIVATE),
+    )
+    private val restored = CompletableDeferred<Unit>()
+
+    suspend fun awaitRestored() = restored.await()
 
     /**
      * Queue where active downloads are kept.
@@ -111,6 +122,7 @@ class AnimeDownloader(
      * Job object for download queue management
      */
     private var downloaderJob: Job? = null
+    private var workerOwner: String? = null
 
     /**
      * Preference for user's choice of external downloader
@@ -125,7 +137,11 @@ class AnimeDownloader(
 
     init {
         scope.launch {
-            addAllToQueue(store.restore())
+            try {
+                addAllToQueue(store.restore())
+            } finally {
+                restored.complete(Unit)
+            }
         }
     }
 
@@ -135,13 +151,19 @@ class AnimeDownloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
-    fun start(): Boolean {
+    @Synchronized
+    fun start(automatic: Boolean = false, owner: String? = null): Boolean {
+        if (automatic && !startState.canStartAutomatically()) return false
         if (isRunning || queueState.value.isEmpty()) {
             return false
         }
 
-        val pending = queueState.value.filter { it.status != AnimeDownload.State.DOWNLOADED }
+        val pending = queueState.value.filter {
+            it.status != AnimeDownload.State.DOWNLOADED && (!automatic || it.status != AnimeDownload.State.ERROR)
+        }
+        if (pending.isEmpty()) return false
         pending.forEach { if (it.status != AnimeDownload.State.QUEUE) it.status = AnimeDownload.State.QUEUE }
+        if (owner != null) workerOwner = owner
 
         launchDownloaderJob()
 
@@ -151,6 +173,7 @@ class AnimeDownloader(
     /**
      * Stops the downloader.
      */
+    @Synchronized
     fun stop(reason: String? = null) {
         cancelDownloaderJob()
         queueState.value
@@ -174,11 +197,43 @@ class AnimeDownloader(
     /**
      * Pauses the downloader
      */
+    @Synchronized
     fun pause() {
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == AnimeDownload.State.DOWNLOADING }
             .forEach { it.status = AnimeDownload.State.QUEUE }
+    }
+
+    fun resumeChallenges() {
+        startState.resumeManually()
+        sourceRequests.resumeChallenges(LibraryUpdateType.ANIME)
+    }
+
+    fun prepareAutomaticStart(): Boolean {
+        val hasPending = queueState.value.any {
+            it.status != AnimeDownload.State.ERROR && it.status != AnimeDownload.State.DOWNLOADED
+        }
+        return hasPending && startState.prepareAutomaticStart()
+    }
+
+    fun pauseByUser() {
+        startState.pauseByUser()
+        pause()
+    }
+
+    @Synchronized
+    fun suspendForNetwork(reason: String) {
+        if (!prepareAutomaticStart()) return
+        pause()
+        notifier.onWarning(reason)
+    }
+
+    @Synchronized
+    fun onWorkerStopped(owner: String) {
+        if (workerOwner == owner && isRunning) {
+            suspendForNetwork(context.stringResource(AYMR.strings.download_paused))
+        }
     }
 
     /**
@@ -335,7 +390,7 @@ class AnimeDownloader(
                         ),
                     )
                 }
-                AnimeDownloadJob.start(context)
+                if (prepareAutomaticStart()) AnimeDownloadJob.start(context, automatic = true)
             }
         }
     }
@@ -366,11 +421,15 @@ class AnimeDownloader(
         try {
             if (download.video == null) {
                 // Pull video from network and add them to download object
-                val hosters = EpisodeLoader.getHosters(download.episode, download.anime, download.source)
+                val hosters = sourceRequests.withRequest(LibraryUpdateType.ANIME, download.source.id) {
+                    EpisodeLoader.getHosters(download.episode, download.anime, download.source)
+                }
                 if (hosters.isEmpty()) {
                     throw Exception(context.stringResource(AYMR.strings.video_list_empty_error))
                 }
-                val bestVideo = HosterLoader.getBestVideo(download.source, hosters)
+                val bestVideo = sourceRequests.withRequest(LibraryUpdateType.ANIME, download.source.id) {
+                    HosterLoader.getBestVideo(download.source, hosters, propagateSourceErrors = true)
+                }
                     ?: throw Exception(context.stringResource(AYMR.strings.video_list_empty_error))
                 download.video = bestVideo
             }
@@ -827,10 +886,12 @@ class AnimeDownloader(
         return queueState.value.none { it.status.value <= AnimeDownload.State.DOWNLOADING.value }
     }
 
-    private fun addAllToQueue(downloads: List<AnimeDownload>) {
+    private fun addAllToQueue(downloads: List<AnimeDownload>, preserveErrors: Boolean = false) {
         _queueState.update {
             downloads.forEach { download ->
-                download.status = AnimeDownload.State.QUEUE
+                if (!preserveErrors || download.status != AnimeDownload.State.ERROR) {
+                    download.status = AnimeDownload.State.QUEUE
+                }
             }
             store.addAll(downloads)
             it + downloads
@@ -898,10 +959,10 @@ class AnimeDownloader(
 
         pause()
         internalClearQueue()
-        addAllToQueue(downloads)
+        addAllToQueue(downloads, preserveErrors = true)
 
         if (wasRunning) {
-            start()
+            start(automatic = true)
         }
     }
 

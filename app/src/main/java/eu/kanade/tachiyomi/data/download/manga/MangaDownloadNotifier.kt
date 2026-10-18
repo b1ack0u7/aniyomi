@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.lang.chop
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
@@ -86,6 +87,7 @@ internal class MangaDownloadNotifier(private val context: Context) {
         with(progressNotificationBuilder) {
             if (!isDownloading) {
                 setSmallIcon(android.R.drawable.stat_sys_download)
+                setStyle(null)
                 clearActions()
                 // Open download manager when clicked
                 setContentIntent(NotificationHandler.openDownloadManagerPendingActivity(context))
@@ -161,6 +163,40 @@ internal class MangaDownloadNotifier(private val context: Context) {
 
         // Reset initial values
         isDownloading = false
+    }
+
+    fun onSourceChallenge(download: MangaDownload) {
+        onWarning(
+            context.stringResource(AYMR.strings.smart_download_challenge),
+            contentIntent = PendingIntent.getActivity(
+                context,
+                download.source.id.hashCode(),
+                WebViewActivity.newIntent(context, download.source.baseUrl, download.source.id, download.source.name),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ),
+        )
+    }
+
+    fun onWaiting(message: String, automatic: Boolean) {
+        onPaused()
+        with(progressNotificationBuilder) {
+            setContentText(message)
+            setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            if (automatic) {
+                clearActions()
+                addAction(
+                    R.drawable.ic_pause_24dp,
+                    context.stringResource(MR.strings.action_pause),
+                    NotificationReceiver.pauseDownloadsPendingBroadcast(context),
+                )
+                addAction(
+                    R.drawable.ic_close_24dp,
+                    context.stringResource(MR.strings.action_cancel_all),
+                    NotificationReceiver.clearDownloadsPendingBroadcast(context),
+                )
+            }
+            show(Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS)
+        }
     }
 
     /**

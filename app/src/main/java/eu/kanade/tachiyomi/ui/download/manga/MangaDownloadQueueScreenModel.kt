@@ -190,6 +190,7 @@ class MangaDownloadQueueScreenModel(
      * @param download the download whose status has changed.
      */
     fun onStatusChange(download: MangaDownload) {
+        onUpdateDownloadedPages(download)
         when (download.status) {
             MangaDownload.State.DOWNLOADING -> {
                 launchProgressJob(download)
@@ -201,7 +202,7 @@ class MangaDownloadQueueScreenModel(
                 onUpdateProgress(download)
                 onUpdateDownloadedPages(download)
             }
-            MangaDownload.State.ERROR -> cancelProgressJob(download)
+            MangaDownload.State.ERROR, MangaDownload.State.QUEUE -> cancelProgressJob(download)
             else -> {
                 /* unused */
             }

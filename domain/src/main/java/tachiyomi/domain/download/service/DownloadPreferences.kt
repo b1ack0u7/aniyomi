@@ -18,6 +18,40 @@ class DownloadPreferences(
         "",
     )
 
+    fun smartMangaDownloads() = preferenceStore.getBoolean("smart_manga_downloads", true)
+
+    fun smartMangaRequestIntervalMs() = preferenceStore.getInt("smart_manga_request_interval_ms", 1500)
+
+    fun smartMangaChapterDelaySeconds() = preferenceStore.getInt("smart_manga_chapter_delay_seconds", 10)
+
+    fun smartMangaBatchSize() = preferenceStore.getInt("smart_manga_batch_size", 5)
+
+    fun smartMangaBatchDelaySeconds() = preferenceStore.getInt("smart_manga_batch_delay_seconds", 120)
+
+    fun smartMangaRetryInitialSeconds() = preferenceStore.getInt("smart_manga_retry_initial_seconds", 300)
+
+    fun smartMangaRetryMaxSeconds() = preferenceStore.getInt("smart_manga_retry_max_seconds", 3600)
+
+    fun applyMangaDownloadPreset(preset: MangaDownloadPreset) {
+        smartMangaRequestIntervalMs().set(preset.requestIntervalMs)
+        smartMangaChapterDelaySeconds().set(preset.chapterDelaySeconds)
+        smartMangaBatchSize().set(preset.batchSize)
+        smartMangaBatchDelaySeconds().set(preset.batchDelaySeconds)
+        smartMangaRetryInitialSeconds().set(preset.retryInitialSeconds)
+        smartMangaRetryMaxSeconds().set(preset.retryMaxSeconds)
+        smartMangaDownloads().set(true)
+    }
+
+    fun restoreRecommendedMangaDownloads() {
+        smartMangaDownloads().delete()
+        smartMangaRequestIntervalMs().delete()
+        smartMangaChapterDelaySeconds().delete()
+        smartMangaBatchSize().delete()
+        smartMangaBatchDelaySeconds().delete()
+        smartMangaRetryInitialSeconds().delete()
+        smartMangaRetryMaxSeconds().delete()
+    }
+
     fun saveChaptersAsCBZ() = preferenceStore.getBoolean("save_chapter_as_cbz", true)
 
     fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)

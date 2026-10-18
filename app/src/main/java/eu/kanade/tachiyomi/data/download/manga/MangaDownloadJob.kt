@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.download.manga
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.core.content.edit
 import androidx.lifecycle.asFlow
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -11,6 +12,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.NetworkState
@@ -18,10 +20,12 @@ import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.combineTransform
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.takeWhile
 import tachiyomi.domain.download.service.DownloadPreferences
 import uy.kohesive.injekt.Injekt
@@ -53,41 +57,49 @@ class MangaDownloadJob(context: Context, workerParams: WorkerParameters) : Corou
     }
 
     override suspend fun doWork(): Result {
+        downloadManager.awaitRestored()
+        currentCoroutineContext().ensureActive()
+        val automatic = inputData.getBoolean("automatic", false)
+        if (!applicationContext.getSharedPreferences("smart_manga_downloads", Context.MODE_PRIVATE)
+                .getBoolean("resume", false)
+        ) {
+            return Result.success()
+        }
         val networkCheck = checkNetworkState(
             applicationContext.activeNetworkState(),
             downloadPreferences.downloadOnlyOverWifi().get(),
         )
 
-        if (!networkCheck || !downloadManager.downloaderStart()) {
+        if (!networkCheck || !downloadManager.downloaderStart(automatic, id.toString())) {
             return Result.failure()
         }
 
-        setForegroundSafely()
-
-        // Keeps the worker alive until the network becomes unusable. checkNetworkState stops the
-        // downloader in that case, and a downloader that finishes on its own cancels this work.
-        combineTransform(
-            applicationContext.networkStateFlow(),
-            downloadPreferences.downloadOnlyOverWifi().changes(),
-            transform = { a, b -> emit(checkNetworkState(a, b)) },
-        )
-            .takeWhile { it }
-            .collect()
-
-        return Result.success()
+        try {
+            setForegroundSafely()
+            combineTransform(
+                applicationContext.networkStateFlow(),
+                downloadPreferences.downloadOnlyOverWifi().changes(),
+                transform = { a, b -> emit(checkNetworkState(a, b)) },
+            )
+                .takeWhile { it }
+                .collect()
+            return Result.success()
+        } finally {
+            downloadManager.onWorkerStopped(id.toString())
+        }
     }
 
     private fun checkNetworkState(state: NetworkState, requireWifi: Boolean): Boolean {
         return if (state.isOnline) {
             val noWifi = requireWifi && !state.isWifi
             if (noWifi) {
-                downloadManager.downloaderStop(
+                downloadManager.suspendForNetwork(
                     applicationContext.getString(R.string.download_notifier_text_only_wifi),
                 )
             }
             !noWifi
         } else {
-            downloadManager.downloaderStop(applicationContext.getString(R.string.download_notifier_no_network))
+            downloadManager.suspendForNetwork(applicationContext.getString(R.string.download_notifier_no_network))
             false
         }
     }
@@ -95,8 +107,13 @@ class MangaDownloadJob(context: Context, workerParams: WorkerParameters) : Corou
     companion object {
         private const val TAG = "MangaDownloader"
 
-        fun start(context: Context) {
+        fun start(context: Context, automatic: Boolean = false) {
+            if (!automatic) {
+                context.getSharedPreferences("smart_manga_downloads", Context.MODE_PRIVATE)
+                    .edit { putBoolean("resume", true) }
+            }
             val request = OneTimeWorkRequestBuilder<MangaDownloadJob>()
+                .setInputData(workDataOf("automatic" to automatic))
                 .addTag(TAG)
                 .build()
             WorkManager.getInstance(context)
@@ -119,7 +136,9 @@ class MangaDownloadJob(context: Context, workerParams: WorkerParameters) : Corou
             return WorkManager.getInstance(context)
                 .getWorkInfosForUniqueWorkLiveData(TAG)
                 .asFlow()
-                .map { list -> list.count { it.state == WorkInfo.State.RUNNING } == 1 }
+                .combine(MangaDownloadResumeJob.isScheduledFlow(context)) { list, waiting ->
+                    waiting || list.any { it.state == WorkInfo.State.RUNNING }
+                }
         }
     }
 }

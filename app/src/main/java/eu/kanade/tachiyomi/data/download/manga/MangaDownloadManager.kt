@@ -46,27 +46,23 @@ class MangaDownloadManager(
     private val getCategories: GetMangaCategories = Injekt.get(),
     private val sourceManager: MangaSourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val downloader: MangaDownloader = MangaDownloader(context, provider, cache),
+    private val pendingDeleter: MangaDownloadPendingDeleter = MangaDownloadPendingDeleter(context),
 ) {
-
-    /**
-     * Downloader whose only task is to download chapters.
-     */
-    private val downloader = MangaDownloader(context, provider, cache)
 
     val isRunning: Boolean
         get() = downloader.isRunning
-
-    /**
-     * Queue to delay the deletion of a list of chapters until triggered.
-     */
-    private val pendingDeleter = MangaDownloadPendingDeleter(context)
 
     val queueState
         get() = downloader.queueState
 
     // For use by DownloadService only
-    fun downloaderStart() = downloader.start()
+    suspend fun awaitRestored() = downloader.awaitRestored()
+
+    fun downloaderStart(automatic: Boolean = false, owner: String? = null) = downloader.start(automatic, owner)
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
+    fun suspendForNetwork(reason: String) = downloader.suspendForNetwork(reason)
+    fun onWorkerStopped(owner: String) = downloader.onWorkerStopped(owner)
 
     val isDownloaderRunning
         get() = MangaDownloadJob.isRunningFlow(context)
@@ -75,20 +71,23 @@ class MangaDownloadManager(
      * Tells the downloader to begin downloads.
      */
     fun startDownloads() {
+        downloader.resumeChallenges()
         if (downloader.isRunning) return
 
-        if (MangaDownloadJob.isRunning(context)) {
-            downloader.start()
-        } else {
-            MangaDownloadJob.start(context)
-        }
+        MangaDownloadJob.start(context)
+    }
+
+    fun startDownloadsAutomatically() {
+        if (downloader.isRunning || !downloader.prepareAutomaticStart()) return
+
+        MangaDownloadJob.start(context, automatic = true)
     }
 
     /**
      * Tells the downloader to pause downloads.
      */
     fun pauseDownloads() {
-        downloader.pause()
+        downloader.pauseByUser()
         downloader.stop()
     }
 
@@ -153,7 +152,7 @@ class MangaDownloadManager(
             addAll(0, downloads)
             reorderQueue(this)
         }
-        if (!MangaDownloadJob.isRunning(context)) startDownloads()
+        if (!MangaDownloadJob.isRunning(context)) startDownloadsAutomatically()
     }
 
     /**
@@ -317,7 +316,7 @@ class MangaDownloadManager(
             if (queueState.value.isEmpty()) {
                 downloader.stop()
             } else if (queueState.value.isNotEmpty()) {
-                downloader.start()
+                downloader.start(automatic = true)
             }
         }
     }
@@ -432,7 +431,10 @@ class MangaDownloadManager(
         .flatMapLatest { downloads ->
             downloads
                 .map { download ->
-                    download.statusFlow.drop(1).map { download }
+                    merge(
+                        download.statusFlow.drop(1),
+                        download.waitingMessage.drop(1),
+                    ).map { download }
                 }
                 .merge()
         }

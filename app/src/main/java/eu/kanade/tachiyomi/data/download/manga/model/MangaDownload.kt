@@ -24,6 +24,9 @@ data class MangaDownload(
 ) {
 
     @Transient
+    val waitingMessage = MutableStateFlow<String?>(null)
+
+    @Transient
     private val _pagesFlow = MutableStateFlow<List<Page>?>(null)
 
     @Transient
