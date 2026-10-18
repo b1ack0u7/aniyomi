@@ -11,6 +11,8 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+
+## [v0.23.0] - 2026-10-17
 ### Added
 
 - Add persistent manga and anime library update retries for transient connection failures and HTTP 429/5xx responses, limited to two additional attempts per title and respecting source cooldowns, Retry-After and automatic update restrictions ([@b1ack0u7](https://github.com/b1ack0u7))

@@ -25,8 +25,8 @@ android {
     defaultConfig {
         applicationId = "xyz.b1ack0u7.aniyomi.mi"
 
-        versionCode = 135
-        versionName = "0.22.0"
+        versionCode = 136
+        versionName = "0.23.0"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
