@@ -31,6 +31,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -173,6 +174,7 @@ fun PlayerControls(
                         ),
                         alpha = transparentOverlay,
                     )
+                    .displayCutoutPadding()
                     .padding(horizontal = MaterialTheme.padding.medium),
             ) {
                 val (topLeftControls, topRightControls) = createRefs()

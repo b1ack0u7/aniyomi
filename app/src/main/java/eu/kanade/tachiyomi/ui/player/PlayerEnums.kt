@@ -17,6 +17,7 @@
 
 package eu.kanade.tachiyomi.ui.player
 
+import android.content.pm.ActivityInfo
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import tachiyomi.core.common.preference.Preference
@@ -47,6 +48,21 @@ enum class PlayerOrientation(val titleRes: StringResource) {
     Landscape(MR.strings.rotation_landscape),
     ReverseLandscape(AYMR.strings.rotation_reverse_landscape),
     SensorLandscape(AYMR.strings.rotation_sensor_landscape),
+}
+
+internal fun PlayerOrientation.toActivityOrientation(videoAspect: Double?): Int = when (this) {
+    PlayerOrientation.Free -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+    PlayerOrientation.Video -> if ((videoAspect ?: 0.0) > 1.0) {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    } else {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+    }
+    PlayerOrientation.Portrait -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    PlayerOrientation.ReversePortrait -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+    PlayerOrientation.SensorPortrait -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+    PlayerOrientation.Landscape -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    PlayerOrientation.ReverseLandscape -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+    PlayerOrientation.SensorLandscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 }
 
 enum class VideoAspect(val titleRes: StringResource) {
@@ -86,8 +102,8 @@ enum class Decoder(val title: String, val value: String) {
     HWPlus("HW+", "mediacodec"),
 }
 
-fun getDecoderFromValue(value: String): Decoder {
-    return Decoder.entries.first { it.value == value }
+fun getDecoderFromValue(value: String?): Decoder {
+    return Decoder.entries.firstOrNull { it.value == value } ?: Decoder.Auto
 }
 
 enum class Debanding {

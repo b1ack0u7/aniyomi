@@ -13,7 +13,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.withContext
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.causeChain
+import tachiyomi.core.common.util.system.logcat
 import kotlin.coroutines.cancellation.CancellationException
 
 class HosterLoader {
@@ -177,6 +179,7 @@ class HosterLoader {
                         if (isChallenge || SourceRequestCoordinator.isRetryable(e)) throw e
                     }
 
+                    logcat(LogPriority.WARN) { videoResolutionFailureMessage(source.id, e) }
                     null
                 }
             } else {
@@ -186,4 +189,9 @@ class HosterLoader {
             return resolvedVideo?.copy(initialized = true)
         }
     }
+}
+
+internal fun videoResolutionFailureMessage(sourceId: Long, error: Exception): String {
+    val types = error.causeChain().joinToString(" -> ") { it.javaClass.simpleName }
+    return "Video resolution failed: sourceId=$sourceId, errors=$types"
 }

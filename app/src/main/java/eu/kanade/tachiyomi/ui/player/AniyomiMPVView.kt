@@ -23,6 +23,7 @@ import android.os.Environment
 import android.util.AttributeSet
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.SurfaceHolder
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.player.controls.components.panels.toColorHexString
 import eu.kanade.tachiyomi.ui.player.settings.AdvancedPlayerPreferences
@@ -47,7 +48,34 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet) : BaseMPVView(c
     private val advancedPreferences: AdvancedPlayerPreferences by injectLazy()
     private val networkPreferences: NetworkPreferences by injectLazy()
 
+    private val surfacePlaybackQueue = SurfacePlaybackQueue()
+    val isSurfaceReady get() = surfacePlaybackQueue.isSurfaceReady
+    var onSurfaceReady: (() -> Unit)? = null
+
     var isExiting = false
+        set(value) {
+            field = value
+            surfacePlaybackQueue.setActive(!value)
+        }
+
+    internal fun beginVideoLoad(): Long = surfacePlaybackQueue.beginLoad()
+
+    internal fun submitVideoLoad(generation: Long, action: () -> Unit) {
+        surfacePlaybackQueue.submit(generation, action)
+    }
+
+    internal fun clearPendingVideoLoad() = surfacePlaybackQueue.clear()
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        super.surfaceCreated(holder)
+        surfacePlaybackQueue.setSurfaceReady(true)
+        onSurfaceReady?.invoke()
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        surfacePlaybackQueue.setSurfaceReady(false)
+        super.surfaceDestroyed(holder)
+    }
 
     private fun getPropertyInt(property: String): Int? {
         return MPVLib.getPropertyInt(property) as Int?
@@ -116,20 +144,16 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet) : BaseMPVView(c
         MPVLib.setPropertyBoolean("pause", true)
         MPVLib.setOptionString("profile", "fast")
         val tryHWDecoding = decoderPreferences.tryHWDecoding().get()
-        MPVLib.setOptionString("hwdec", if (tryHWDecoding) "auto" else "no")
-        when (decoderPreferences.videoDebanding().get()) {
-            Debanding.None -> {}
-            Debanding.CPU -> MPVLib.setOptionString("vf", "gradfun=radius=12")
-            Debanding.GPU -> MPVLib.setOptionString("deband", "yes")
+        val debanding = decoderPreferences.videoDebanding().get()
+        MPVLib.setOptionString("hwdec", buildVideoFilterHwdec(debanding, tryHWDecoding))
+        if (debanding == Debanding.GPU) {
+            MPVLib.setOptionString("deband", "yes")
         }
-
-        // `format=yuv420p` needs frames in CPU memory, which mediacodec surfaces cannot provide:
-        // mpv logs "cannot copy surface of this format to CPU memory" and drops the filter. Where
-        // the copy does succeed it costs a GPU->CPU download per frame, so keep it to software
-        // decoding, where it is actually free.
-        if (decoderPreferences.useYUV420P().get() && !tryHWDecoding) {
-            MPVLib.setOptionString("vf", "format=yuv420p")
-        }
+        buildVideoFilterChain(
+            debanding = debanding,
+            useYuv420p = decoderPreferences.useYUV420P().get(),
+            tryHWDecoding = tryHWDecoding,
+        )?.let { MPVLib.setOptionString("vf", it) }
         MPVLib.setOptionString("msg-level", "all=" + if (networkPreferences.verboseLogging().get()) "v" else "warn")
 
         MPVLib.setPropertyBoolean("keep-open", true)

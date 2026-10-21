@@ -11,6 +11,35 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+### Improved
+
+- Remember Pinned/All and Has results when reopening anime or manga search; opening a link limited to one extension preserves the saved source selection
+- Retry empty anime and manga searches once with normalized punctuation and spacing, preserving other sources' results and using the successful query for source navigation and pagination
+- Explain empty global searches, missing enabled or pinned sources, and errors hidden by the results filter, with recovery actions for anime and manga
+- Release search request resources and observers from previous queries, and bound simultaneous global source requests on both sides; adapted from Mihon [a4780e4ed](https://github.com/mihonapp/mihon/commit/a4780e4ed) and [2d1d2e4ca](https://github.com/mihonapp/mihon/commit/2d1d2e4cabc404461b3346b31b71c16cbca3be7b)
+
+### Fixed
+
+- Resume fallback playback after a stream ends without meaningful progress, preserving explicit pauses instead of inheriting mpv’s automatic EOF pause
+
+- Synchronize anime player MediaSession state, position, speed and duration with mpv, including pause, buffering, seeks and episode changes; stop playback when the system requests Stop
+
+- Wait for an attached player surface before loading videos, preserving pending load options and rejecting stale episode or server results
+- Keep reverse landscape playback horizontal, restore saved video aspect on load and resize, and calculate Stretch from the player surface
+- Respect the disabled PiP preference for automatic entry, refresh PiP video dimensions safely, and honor the video cutout preference while keeping controls clear of cutouts
+- Respect disabled slider preferences in player and manga reader settings
+- Keep CPU debanding and software YUV conversion in one player filter chain, preserve the hardware YUV guard, and tolerate unknown decoder values
+- Close mpv script, script-option, shader and font streams after copying; apply player cutout attributes and read the status-bar preference when showing controls
+- Preserve episode progress when an external player returns no usable playback times, and accept integer or long result extras
+- Pause after a played episode ends with autoplay disabled, preserving failed-stream recovery, and avoid saving unchanged player aspect preferences
+- Prevent old global searches and source retries from replacing newer results, preserve simultaneous source responses, and isolate incompatible extension errors on both sides; concurrent result handling adapted from Mihon [4c88f0264](https://github.com/mihonapp/mihon/commit/4c88f0264)
+- Keep unapplied filter edits separate from active search pages and handle source sort filters without an initial selection for anime and manga
+- Preserve source suggestion pagination when reopening cached results and allow retrying failed searches without caching network failures as empty results
+
+### Other
+
+- Log source IDs and error types for failed video resolution without exposing exception messages, video URLs or credentials
+- Add regression coverage for search cancellation, concurrent results, normalized retries, filters, pagination, empty states, and source suggestion caching
 
 ## [v0.23.0] - 2026-10-17
 ### Added

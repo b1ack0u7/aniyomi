@@ -28,17 +28,19 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioManager
+import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Rational
 import android.view.KeyEvent
 import android.view.View
@@ -48,10 +50,13 @@ import androidx.activity.viewModels
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.core.graphics.Insets
 import androidx.core.net.toUri
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.media.AudioAttributesCompat
@@ -123,6 +128,7 @@ class PlayerActivity : BaseActivity() {
     val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     private var mediaSession: MediaSession? = null
+    private val sessionState = PlayerSessionState()
     private val playbackHealth = PlaybackHealth()
     private val gesturePreferences: GesturePreferences by lazy { viewModel.gesturePreferences }
     private val playerPreferences: PlayerPreferences by lazy { viewModel.playerPreferences }
@@ -138,10 +144,10 @@ class PlayerActivity : BaseActivity() {
     private var restoreAudioFocus: () -> Unit = {}
 
     private var pipRect: Rect? = null
-    val isPipSupportedAndEnabled by lazy {
-        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
-            playerPreferences.enablePip().get()
-    }
+    private val isPipSupported
+        get() = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    val isPipSupportedAndEnabled
+        get() = isPipSupported && playerPreferences.enablePip().get()
 
     private var pipReceiver: BroadcastReceiver? = null
 
@@ -200,6 +206,9 @@ class PlayerActivity : BaseActivity() {
             LibraryUpdateType.ANIME.notificationTag(animeId),
         )
 
+        resetMediaSession()
+        player.clearPendingVideoLoad()
+        viewModel.cancelStallWatchdog()
         viewModel.saveCurrentEpisodeWatchingProgress()
 
         lifecycleScope.launchNonCancellable {
@@ -242,6 +251,7 @@ class PlayerActivity : BaseActivity() {
         setupPlayerAudio()
         setupMediaSession()
         setupPlayerOrientation()
+        setupPlayerLayout()
 
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             runOnUiThread {
@@ -298,6 +308,8 @@ class PlayerActivity : BaseActivity() {
 
     override fun onDestroy() {
         player.isExiting = true
+        player.clearPendingVideoLoad()
+        player.onSurfaceReady = null
 
         audioFocusRequest?.let {
             AudioManagerCompat.abandonAudioFocusRequest(audioManager, it)
@@ -307,6 +319,7 @@ class PlayerActivity : BaseActivity() {
         mediaSession?.let {
             it.isActive = false
             it.release()
+            mediaSession = null
         }
 
         if (noisyReceiver.initialized) {
@@ -330,6 +343,10 @@ class PlayerActivity : BaseActivity() {
             return
         }
 
+        sessionState.paused = true
+        sessionState.loading = false
+        sessionState.positionSeconds = player.timePos?.toLong() ?: sessionState.positionSeconds
+        updateMediaSessionState()
         player.isExiting = true
         if (isFinishing) {
             viewModel.deletePendingEpisodes()
@@ -357,7 +374,7 @@ class PlayerActivity : BaseActivity() {
 
     override fun onUserLeaveHint() {
         if (isPipSupportedAndEnabled && player.paused == false && playerPreferences.pipOnExit().get()) {
-            enterPictureInPictureMode()
+            enterPictureInPictureMode(createPipParams())
         }
         super.onUserLeaveHint()
     }
@@ -369,7 +386,7 @@ class PlayerActivity : BaseActivity() {
                 viewModel.panelShown.value == Panels.None &&
                 viewModel.dialogShown.value == Dialogs.None
             ) {
-                enterPictureInPictureMode()
+                enterPictureInPictureMode(createPipParams())
             }
         } else {
             super.onBackPressed()
@@ -378,7 +395,7 @@ class PlayerActivity : BaseActivity() {
 
     override fun onStart() {
         super.onStart()
-        setPictureInPictureParams(createPipParams())
+        updatePipParams()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.setFlags(
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -395,17 +412,57 @@ class PlayerActivity : BaseActivity() {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes.layoutInDisplayCutoutMode = if (playerPreferences.playerFullscreen().get()) {
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            } else {
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (playerPreferences.playerFullscreen().get()) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+                }
             }
         }
+
+        ViewCompat.requestApplyInsets(binding.root)
 
         if (playerPreferences.rememberPlayerBrightness().get()) {
             playerPreferences.playerBrightnessValue().get().let {
                 if (it != -1f) viewModel.changeBrightnessTo(it)
             }
+        }
+    }
+
+    private fun setupPlayerLayout() {
+        player.onSurfaceReady = ::applyVideoAspect
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+            // Android 15+ ignores NEVER for non-floating windows; reserve the cutout ourselves.
+            val avoidCutout = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM &&
+                !playerPreferences.playerFullscreen().get() &&
+                !isInPictureInPictureMode
+            val cutout = if (avoidCutout) insets.getInsets(WindowInsetsCompat.Type.displayCutout()) else Insets.NONE
+            view.updatePadding(cutout.left, cutout.top, cutout.right, cutout.bottom)
+            if (avoidCutout) {
+                WindowInsetsCompat.Builder(insets)
+                    .setInsets(WindowInsetsCompat.Type.displayCutout(), Insets.NONE)
+                    .setDisplayCutout(null)
+                    .build()
+            } else {
+                insets
+            }
+        }
+        player.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                applyVideoAspect()
+            }
+        }
+    }
+
+    private fun applyVideoAspect() {
+        if (player.isSurfaceReady &&
+            !player.isExiting &&
+            !isInPictureInPictureMode &&
+            player.width > 0 &&
+            player.height > 0
+        ) {
+            viewModel.changeVideoAspect(playerPreferences.aspectState().get())
         }
     }
 
@@ -462,28 +519,33 @@ class PlayerActivity : BaseActivity() {
             storageManager.getScriptsDirectory()?.listFiles()?.forEach { file ->
                 val outFile = scriptsDir()?.createFile(file.name)
                 outFile?.let {
-                    file.openInputStream().copyTo(it.openOutputStream())
+                    file.openInputStream().use { input ->
+                        it.openOutputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
             storageManager.getScriptOptsDirectory()?.listFiles()?.forEach { file ->
                 val outFile = scriptOptsDir()?.createFile(file.name)
                 outFile?.let {
-                    file.openInputStream().copyTo(it.openOutputStream())
+                    file.openInputStream().use { input ->
+                        it.openOutputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
             storageManager.getShadersDirectory()?.listFiles()?.forEach { file ->
                 val outFile = shadersDir()?.createFile(file.name)
                 outFile?.let {
-                    file.openInputStream().copyTo(it.openOutputStream())
+                    file.openInputStream().use { input ->
+                        it.openOutputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
         }
 
         // Copy over the bridge file
         val luaFile = scriptsDir()?.createFile("aniyomi.lua")
-        val luaBridge = assets.open("aniyomi.lua")
         luaFile?.openOutputStream()?.bufferedWriter()?.use { scriptLua ->
-            luaBridge.bufferedReader().use { scriptLua.write(it.readText()) }
+            assets.open("aniyomi.lua").bufferedReader().use { scriptLua.write(it.readText()) }
         }
     }
 
@@ -523,7 +585,9 @@ class PlayerActivity : BaseActivity() {
             storageManager.getFontsDirectory()?.listFiles()?.forEach { font ->
                 val outFile = fontsDirectory.createFile(font.name)
                 outFile?.let {
-                    font.openInputStream().copyTo(it.openOutputStream())
+                    font.openInputStream().use { input ->
+                        it.openOutputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
 
@@ -648,12 +712,12 @@ class PlayerActivity : BaseActivity() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
         if (!isInPictureInPictureMode) {
-            viewModel.changeVideoAspect(playerPreferences.aspectState().get())
+            applyVideoAspect()
         } else {
             viewModel.hideControls()
         }
-        super.onConfigurationChanged(newConfig)
     }
 
     fun showToast(message: String) {
@@ -670,6 +734,8 @@ class PlayerActivity : BaseActivity() {
                     // Real progress: whatever server we are on is alive.
                     viewModel.onPlaybackProgressed()
                 }
+                sessionState.positionSeconds = value
+                updateMediaSessionState()
                 viewModel.updatePlayBackPos(value.toFloat())
                 viewModel.setChapter(value.toFloat())
             }
@@ -677,7 +743,11 @@ class PlayerActivity : BaseActivity() {
             "volume" -> viewModel.setMPVVolume(value.toInt())
             "volume-max" -> viewModel.volumeBoostCap = value.toInt() - 100
             // "chapter" -> viewModel.updateChapter(value)
-            "duration" -> viewModel.duration.update { value.toFloat() }
+            "duration" -> {
+                viewModel.duration.update { value.toFloat() }
+                sessionState.durationSeconds = value
+                updateMediaSessionMetadata()
+            }
             "user-data/current-anime/intro-length" -> viewModel.setAnimeSkipIntroLength(value)
         }
     }
@@ -697,20 +767,24 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (property) {
             "pause" -> {
+                sessionState.paused = value
+                updateMediaSessionState()
                 if (value && player.paused == true) {
-                    viewModel.pause()
+                    viewModel.onPlaybackPauseChanged(true, MPVLib.getPropertyBoolean("eof-reached") == true)
                     window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else if (!value && player.paused == false) {
-                    viewModel.unpause()
+                    viewModel.onPlaybackPauseChanged(false, MPVLib.getPropertyBoolean("eof-reached") == true)
                     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
 
                 runCatching {
-                    setPictureInPictureParams(createPipParams())
+                    updatePipParams()
                 }
             }
 
             "paused-for-cache" -> {
+                sessionState.buffering = value
+                updateMediaSessionState()
                 playbackHealth.onBuffering(value)
                 if (value) {
                     viewModel.startStallWatchdog()
@@ -722,10 +796,14 @@ class PlayerActivity : BaseActivity() {
             }
 
             "seeking" -> {
+                sessionState.seeking = value
+                updateMediaSessionState()
                 viewModel.isLoading.update { value }
             }
 
             "eof-reached" -> {
+                sessionState.ended = value
+                updateMediaSessionState()
                 endFile(value)
             }
         }
@@ -756,8 +834,12 @@ class PlayerActivity : BaseActivity() {
     internal fun onObserverEvent(property: String, value: Double) {
         if (player.isExiting) return
         when (property) {
-            "speed" -> viewModel.playbackSpeed.update { value.toFloat() }
-            "video-params/aspect" -> if (isPipSupportedAndEnabled) createPipParams()
+            "speed" -> {
+                viewModel.playbackSpeed.update { value.toFloat() }
+                sessionState.speed = value.toFloat()
+                updateMediaSessionState()
+            }
+            "video-params/aspect" -> updatePipParams()
         }
     }
 
@@ -765,13 +847,24 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (eventId) {
             MPVLib.mpvEventId.MPV_EVENT_FILE_LOADED -> {
+                refreshLoadedMediaSession()
                 viewModel.viewModelScope.launchIO { fileLoaded() }
             }
-            MPVLib.mpvEventId.MPV_EVENT_SEEK -> viewModel.isLoading.update { true }
+            MPVLib.mpvEventId.MPV_EVENT_SEEK -> {
+                sessionState.seeking = true
+                updateMediaSessionState()
+                viewModel.isLoading.update { true }
+            }
             MPVLib.mpvEventId.MPV_EVENT_PLAYBACK_RESTART -> {
+                sessionState.seeking = false
+                updateMediaSessionState()
                 player.isExiting = false
             }
         }
+    }
+
+    fun updatePipParams() {
+        if (isPipSupported) setPictureInPictureParams(createPipParams())
     }
 
     fun createPipParams(): PictureInPictureParams {
@@ -785,9 +878,13 @@ class PlayerActivity : BaseActivity() {
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val autoEnter = playerPreferences.pipOnExit().get()
-            builder.setAutoEnterEnabled(player.paused == false && autoEnter)
-            builder.setSeamlessResizeEnabled(player.paused == false && autoEnter)
+            val autoEnter = shouldAutoEnterPip(
+                enabled = isPipSupportedAndEnabled,
+                onExit = playerPreferences.pipOnExit().get(),
+                paused = player.paused,
+            )
+            builder.setAutoEnterEnabled(autoEnter)
+            builder.setSeamlessResizeEnabled(autoEnter)
         }
         builder.setActions(
             createPipActions(
@@ -799,11 +896,8 @@ class PlayerActivity : BaseActivity() {
             ),
         )
         builder.setSourceRectHint(pipRect)
-        player.videoH?.let {
-            val height = it
-            val width = it * player.getVideoOutAspect()!!
-            val rational = Rational(height, width.toInt()).toFloat()
-            if (rational in 0.42..2.38) builder.setAspectRatio(Rational(width.toInt(), height))
+        pipVideoSize(player.videoH, player.getVideoOutAspect())?.let {
+            builder.setAspectRatio(Rational(it.width, it.height))
         }
         return builder.build()
     }
@@ -816,7 +910,7 @@ class PlayerActivity : BaseActivity() {
                 pipReceiver = null
             }
         } else {
-            setPictureInPictureParams(createPipParams())
+            updatePipParams()
             viewModel.hideControls()
             viewModel.hideSeekBar()
             viewModel.isBrightnessSliderShown.update { false }
@@ -832,7 +926,7 @@ class PlayerActivity : BaseActivity() {
                         PIP_PREVIOUS -> viewModel.changeEpisode(true)
                         PIP_SKIP -> viewModel.seekBy(10)
                     }
-                    setPictureInPictureParams(createPipParams())
+                    updatePipParams()
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -843,25 +937,14 @@ class PlayerActivity : BaseActivity() {
         }
 
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        ViewCompat.requestApplyInsets(binding.root)
+        if (!isInPictureInPictureMode) player.post { applyVideoAspect() }
     }
 
     private fun setupPlayerOrientation() {
         if (player.isExiting) return
-        requestedOrientation = when (playerPreferences.defaultPlayerOrientationType().get()) {
-            PlayerOrientation.Free -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
-            PlayerOrientation.Video -> if ((player.getVideoOutAspect() ?: 0.0) > 1.0) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            }
-
-            PlayerOrientation.Portrait -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            PlayerOrientation.ReversePortrait -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-            PlayerOrientation.SensorPortrait -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            PlayerOrientation.Landscape -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            PlayerOrientation.ReverseLandscape -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-            PlayerOrientation.SensorLandscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        }
+        requestedOrientation = playerPreferences.defaultPlayerOrientationType().get()
+            .toActivityOrientation(player.getVideoOutAspect())
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -975,27 +1058,64 @@ class PlayerActivity : BaseActivity() {
                     override fun onStop() {
                         super.onStop()
                         isActive = false
-                        this@PlayerActivity.onStop()
+                        viewModel.pause()
+                        finish()
                     }
                 },
-            )
-            setPlaybackState(
-                PlaybackState.Builder()
-                    .setActions(
-                        PlaybackState.ACTION_PLAY or
-                            PlaybackState.ACTION_PAUSE or
-                            PlaybackState.ACTION_STOP or
-                            PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                            PlaybackState.ACTION_SKIP_TO_NEXT,
-                    )
-                    .build(),
             )
             isActive = true
         }
 
+        updateMediaSessionState()
         val filter = IntentFilter().apply { addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY) }
         registerReceiver(noisyReceiver, filter)
         noisyReceiver.initialized = true
+    }
+
+    private fun updateMediaSessionState() {
+        mediaSession?.setPlaybackState(
+            PlaybackState.Builder()
+                .setActions(
+                    PlaybackState.ACTION_PLAY or
+                        PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE or
+                        PlaybackState.ACTION_STOP or
+                        PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                        PlaybackState.ACTION_SKIP_TO_NEXT,
+                )
+                .setState(
+                    sessionState.state,
+                    sessionState.positionMs,
+                    sessionState.playbackSpeed,
+                    SystemClock.elapsedRealtime(),
+                )
+                .build(),
+        )
+    }
+
+    private fun updateMediaSessionMetadata() {
+        mediaSession?.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, viewModel.currentEpisode.value?.name)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM, viewModel.currentAnime.value?.title)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, sessionState.durationMs)
+                .build(),
+        )
+    }
+
+    private fun refreshLoadedMediaSession() {
+        sessionState.loading = false
+        sessionState.paused = player.paused ?: true
+        sessionState.positionSeconds = player.timePos?.toLong() ?: 0L
+        sessionState.durationSeconds = player.duration?.toLong() ?: 0L
+        updateMediaSessionMetadata()
+        updateMediaSessionState()
+    }
+
+    private fun resetMediaSession() {
+        sessionState.startLoading()
+        mediaSession?.setMetadata(null)
+        updateMediaSessionState()
     }
 
     // ==== END MPVKT ====
@@ -1013,6 +1133,9 @@ class PlayerActivity : BaseActivity() {
      * @param autoPlay whether the episode is switching due to auto play
      */
     internal fun changeEpisode(episodeId: Long?, autoPlay: Boolean = false) {
+        resetMediaSession()
+        player.clearPendingVideoLoad()
+        viewModel.cancelStallWatchdog()
         viewModel.sheetShown.update { _ -> Sheets.None }
         viewModel.panelShown.update { _ -> Panels.None }
         viewModel.pause()
@@ -1035,6 +1158,7 @@ class PlayerActivity : BaseActivity() {
                         launchUI { toast(AYMR.strings.no_next_episode) }
                     }
                     viewModel.isLoading.update { _ -> false }
+                    refreshLoadedMediaSession()
                 }
 
                 else -> {
@@ -1075,9 +1199,22 @@ class PlayerActivity : BaseActivity() {
     }
 
     fun setVideo(video: Video?, position: Long? = null) {
-        if (player.isExiting) return
-        if (video == null) return
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            runOnUiThread { setVideo(video, position) }
+            return
+        }
+        if (player.isExiting || isDestroyed || isFinishing) return
+        if (video == null || video != viewModel.currentVideo.value) return
 
+        val resumePosition = player.timePos?.toLong() ?: sessionState.positionSeconds
+        resetMediaSession()
+        if (!viewModel.isLoadingEpisode.value) {
+            sessionState.positionSeconds = resumePosition
+            updateMediaSessionState()
+        }
+        val generation = player.beginVideoLoad()
+        val episodeId = viewModel.currentEpisode.value?.id
+        viewModel.cancelStallWatchdog()
         setHttpOptions(video)
 
         if (viewModel.isLoadingEpisode.value) {
@@ -1101,34 +1238,51 @@ class PlayerActivity : BaseActivity() {
             "$option=\"$value\""
         }
 
-        playbackHealth.onLoadFile()
-
-        // Arm the countdown for the new file: a server that never opens the stream is just as
-        // stuck as one that stalls halfway, and both should fail over.
-        viewModel.cancelStallWatchdog()
-        viewModel.startStallWatchdog()
-
-        if (torrentPreferences.torrServerEnable().get() &&
-            (
-                video.videoUrl.startsWith(torrentServerApi.hostUrl) ||
-                    video.videoUrl.startsWith("magnet") ||
-                    video.videoUrl.endsWith("torrent")
-                )
-        ) {
-            launchIO {
-                TorrentServerService.start()
-                torrentLinkHandler(video.videoUrl, video.videoTitle, videoOptions)
+        player.submitVideoLoad(generation) {
+            if (episodeId == viewModel.currentEpisode.value?.id && video == viewModel.currentVideo.value) {
+                playbackHealth.onLoadFile()
+                // Surface startup is not a server stall; resolution/opening still uses the watchdog.
+                viewModel.startStallWatchdog()
+                if (torrentPreferences.torrServerEnable().get() &&
+                    (
+                        video.videoUrl.startsWith(torrentServerApi.hostUrl) ||
+                            video.videoUrl.startsWith("magnet") ||
+                            video.videoUrl.endsWith("torrent")
+                        )
+                ) {
+                    launchIO {
+                        TorrentServerService.start()
+                        torrentLinkHandler(video, videoOptions, generation, episodeId)
+                    }
+                } else {
+                    loadVideoWhenSurfaceReady(video, parseVideoUrl(video.videoUrl), videoOptions, generation, episodeId)
+                }
             }
-        } else {
-            MPVLib.command(
-                arrayOf(
-                    "loadfile",
-                    parseVideoUrl(video.videoUrl),
-                    "replace",
-                    "0",
-                    videoOptions,
-                ),
-            )
+        }
+    }
+
+    private fun loadVideoWhenSurfaceReady(
+        video: Video,
+        url: String?,
+        videoOptions: String,
+        generation: Long,
+        episodeId: Long?,
+    ) {
+        runOnUiThread {
+            if (isDestroyed ||
+                isFinishing ||
+                episodeId != viewModel.currentEpisode.value?.id ||
+                video != viewModel.currentVideo.value
+            ) {
+                return@runOnUiThread
+            }
+            if (!player.isSurfaceReady) viewModel.cancelStallWatchdog()
+            player.submitVideoLoad(generation) {
+                if (episodeId == viewModel.currentEpisode.value?.id && video == viewModel.currentVideo.value) {
+                    viewModel.startStallWatchdog()
+                    MPVLib.command(arrayOf("loadfile", url, "replace", "0", videoOptions))
+                }
+            }
         }
     }
 
@@ -1146,7 +1300,14 @@ class PlayerActivity : BaseActivity() {
         finish()
     }
 
-    private suspend fun torrentLinkHandler(videoUrl: String, title: String, videoOptions: String) {
+    private suspend fun torrentLinkHandler(
+        video: Video,
+        videoOptions: String,
+        generation: Long,
+        episodeId: Long?,
+    ) {
+        val videoUrl = video.videoUrl
+        val title = video.videoTitle
         var index = 0
 
         // check if link is from localSource
@@ -1155,15 +1316,7 @@ class PlayerActivity : BaseActivity() {
             val torrent = torrentServerApi.uploadTorrent(videoInputStream!!, title, false)
             val torrentUrl = torrentServerUtils.getTorrentPlayLink(torrent, 0)
 
-            MPVLib.command(
-                arrayOf(
-                    "loadfile",
-                    torrentUrl,
-                    "replace",
-                    "0",
-                    videoOptions,
-                ),
-            )
+            loadVideoWhenSurfaceReady(video, torrentUrl, videoOptions, generation, episodeId)
             return
         }
 
@@ -1181,15 +1334,7 @@ class PlayerActivity : BaseActivity() {
         val currentTorrent = torrentServerApi.addTorrent(videoUrl, title, "", "", false)
         val videoTorrentUrl = torrentServerUtils.getTorrentPlayLink(currentTorrent, index)
 
-        MPVLib.command(
-            arrayOf(
-                "loadfile",
-                videoTorrentUrl,
-                "replace",
-                "0",
-                videoOptions,
-            ),
-        )
+        loadVideoWhenSurfaceReady(video, videoTorrentUrl, videoOptions, generation, episodeId)
     }
 
     fun parseVideoUrl(videoUrl: String?): String? {
@@ -1278,6 +1423,7 @@ class PlayerActivity : BaseActivity() {
         setMpvOptions()
         setMpvMediaTitle()
         setupPlayerOrientation()
+        runOnUiThread { applyVideoAspect() }
         setupChapters()
         setupTracks()
 
@@ -1416,6 +1562,8 @@ class PlayerActivity : BaseActivity() {
 
         if (playerPreferences.autoplayEnabled().get()) {
             viewModel.changeEpisode(previous = false, autoPlay = true)
+        } else {
+            viewModel.pause()
         }
     }
 }

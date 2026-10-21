@@ -359,45 +359,11 @@ class ExternalIntents {
 
         val anime = anime
         val currentExtEpisode = episode
-        val currentPosition: Long
-        val duration: Long
-        val cause = data.getStringExtra("end_by") ?: ""
+        val progress = externalPlaybackProgress(currentExtEpisode.totalSeconds) { data.extras?.get(it) }
 
-        // Check for position and duration as Long values
-        if (cause.isNotEmpty()) {
-            val positionExtra = data.extras?.get("position")
-            currentPosition = if (positionExtra is Int) {
-                positionExtra.toLong()
-            } else {
-                positionExtra as? Long ?: 0L
-            }
-            val durationExtra = data.extras?.get("duration")
-            duration = if (durationExtra is Int) {
-                durationExtra.toLong()
-            } else {
-                durationExtra as? Long ?: 0L
-            }
-        } else {
-            if (data.extras?.get("extra_position") != null) {
-                currentPosition = data.getLongExtra("extra_position", 0L)
-                duration = data.getLongExtra("extra_duration", 0L)
-            } else {
-                currentPosition = data.getIntExtra("position", 0).toLong()
-                duration = data.getIntExtra("duration", 0).toLong()
-            }
-        }
-
-        // Update the episode's progress and history
         launchIO {
-            if (cause == "playback_completion" || (currentPosition == duration && duration == 0L)) {
-                saveEpisodeProgress(
-                    currentExtEpisode,
-                    anime,
-                    currentExtEpisode.totalSeconds,
-                    currentExtEpisode.totalSeconds,
-                )
-            } else {
-                saveEpisodeProgress(currentExtEpisode, anime, currentPosition, duration)
+            if (progress != null) {
+                saveEpisodeProgress(currentExtEpisode, anime, progress.position, progress.duration)
             }
             saveEpisodeHistory(currentExtEpisode)
         }

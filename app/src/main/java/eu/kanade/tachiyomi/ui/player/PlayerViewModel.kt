@@ -29,7 +29,6 @@ import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
-import android.util.DisplayMetrics
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
@@ -272,9 +271,7 @@ class PlayerViewModel @JvmOverloads constructor(
     private val _paused = MutableStateFlow(false)
     val paused = _paused.asStateFlow()
 
-    // False because the video shouldn't start paused
-    private val _pausedState = MutableStateFlow<Boolean?>(false)
-    val pausedState = _pausedState.asStateFlow()
+    private val playbackPauseState = PlaybackPauseState()
 
     private val _controlsShown = MutableStateFlow(!playerPreferences.hideControls().get())
     val controlsShown = _controlsShown.asStateFlow()
@@ -626,22 +623,13 @@ class PlayerViewModel @JvmOverloads constructor(
         _readAhead.update { value.toFloat() }
     }
 
-    private fun updatePausedState() {
-        if (pausedState.value == null) {
-            _pausedState.update { _ -> paused.value }
-        }
+    private fun setPausedState() {
+        playbackPauseState.takeAfterLoad()?.let(::applyPausedState)
     }
 
-    private fun setPausedState() {
-        pausedState.value?.let {
-            if (it) {
-                pause()
-            } else {
-                unpause()
-            }
-
-            _pausedState.update { _ -> null }
-        }
+    fun onPlaybackPauseChanged(paused: Boolean, eofReached: Boolean) {
+        playbackPauseState.observe(paused, eofReached)
+        _paused.update { paused }
     }
 
     fun pauseUnpause() {
@@ -653,19 +641,25 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun pause() {
-        activity.player.paused = true
-        _paused.update { true }
-        runCatching {
-            activity.setPictureInPictureParams(activity.createPipParams())
-        }
+        playbackPauseState.request(true)
+        applyPausedState(true)
     }
 
     fun unpause() {
-        activity.player.paused = false
-        _paused.update { false }
+        playbackPauseState.request(false)
+        applyPausedState(false)
     }
 
-    private val showStatusBar = playerPreferences.showSystemStatusBar().get()
+    private fun applyPausedState(paused: Boolean) {
+        activity.player.paused = paused
+        _paused.update { paused }
+        if (paused) {
+            runCatching {
+                activity.updatePipParams()
+            }
+        }
+    }
+
     fun showControls() {
         if (sheetShown.value != Sheets.None ||
             panelShown.value != Panels.None ||
@@ -673,7 +667,7 @@ class PlayerViewModel @JvmOverloads constructor(
         ) {
             return
         }
-        if (showStatusBar) {
+        if (playerPreferences.showSystemStatusBar().get()) {
             activity.windowInsetsController.show(WindowInsetsCompat.Type.statusBars())
         }
         _controlsShown.update { true }
@@ -812,7 +806,6 @@ class PlayerViewModel @JvmOverloads constructor(
         playerPreferences.autoplayEnabled().set(value)
     }
 
-    @Suppress("DEPRECATION")
     fun changeVideoAspect(aspect: VideoAspect) {
         var ratio = -1.0
         var pan = 1.0
@@ -827,16 +820,16 @@ class PlayerViewModel @JvmOverloads constructor(
             }
 
             VideoAspect.Stretch -> {
-                val dm = DisplayMetrics()
-                activity.windowManager.defaultDisplay.getRealMetrics(dm)
-                ratio = dm.widthPixels / dm.heightPixels.toDouble()
+                ratio = videoSurfaceAspect(activity.player.width, activity.player.height)
                 pan = 0.0
             }
         }
         MPVLib.setPropertyDouble("panscan", pan)
         MPVLib.setPropertyDouble("video-aspect-override", ratio)
-        playerPreferences.aspectState().set(aspect)
-        playerUpdate.update { PlayerUpdates.AspectRatio }
+        if (playerPreferences.aspectState().get() != aspect) {
+            playerPreferences.aspectState().set(aspect)
+            playerUpdate.update { PlayerUpdates.AspectRatio }
+        }
     }
 
     fun cycleScreenRotations() {
@@ -1024,7 +1017,7 @@ class PlayerViewModel @JvmOverloads constructor(
      * Reset state when changing episodes
      */
     fun resetState() {
-        _pausedState.update { _ -> false }
+        playbackPauseState.reset()
         _hosterState.update { _ -> emptyList() }
         _hosterList.update { _ -> emptyList() }
         _hosterExpandedList.update { _ -> emptyList() }
@@ -1478,8 +1471,8 @@ class PlayerViewModel @JvmOverloads constructor(
         )
 
         // Pause until everything has loaded
-        updatePausedState()
-        pause()
+        playbackPauseState.beginLoad()
+        applyPausedState(true)
 
         val resolvedVideo = if (selectedHosterState.videoState[videoIndex] != Video.State.READY) {
             HosterLoader.getResolvedVideo(source, video)
