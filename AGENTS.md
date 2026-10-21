@@ -18,11 +18,12 @@ This checkout is a customized fork: `app/build.gradle.kts` currently uses applic
 
 ## Branches, pull requests and releases
 
-- Start a task branch from updated `origin/dev`, using the `codex/` prefix. A fresh clone can use `git clone --branch dev git@github.com:b1ack0u7/aniyomi.git`; then create the task branch. Never work from `main` for ordinary changes.
-- Send task PRs to `dev`, describe anime/manga impact and validation, and wait for `PR checks` before merging. Keep `CHANGELOG.md` entries under `Unreleased` for user-visible changes. Leave commits/pushes/merges to the user unless authorized.
+- Prefer working directly on `dev` for local tasks. Use another branch when the user requests it or when working in Codex Cloud. A fresh local clone can use `git clone --branch dev git@github.com:b1ack0u7/aniyomi.git`; no task branch is required for ordinary local editing. Never work from `main` for ordinary changes.
+- In Codex Cloud, use an isolated task branch based on updated `origin/dev`. Use the `codex/` prefix for newly created task branches unless the user specifies another name or base. Preserve existing changes when switching or updating branches; never reset a shared branch to match the remote.
+- For an authorized PR, transfer local work from `dev` to a task branch before committing and publishing it. Target `dev`, describe anime/manga impact and validation, and wait for `PR checks` before merging. Keep `CHANGELOG.md` entries under `Unreleased` for user-visible changes. Leave commits/pushes/merges to the user unless authorized.
 - `main` is the release branch: only PRs from this repository's `dev` branch pass CI. Its active ruleset requires an up-to-date PR, successful GitHub Actions `PR checks`, and a merge commit; administrators cannot bypass it. No additional approving reviewer is required.
-- `dev` has PR validation but is not branch-protected, to allow the release maintainer's post-release fast-forward from `main`. Ordinary work still uses PRs; do not treat direct pushes as the normal development workflow.
-- Follow [the release procedure](scripts/release/releasing.md): prepare version/changelog on a task branch into `dev`, then open `dev` → `main`, wait for CI and release authorization, merge with `--merge`, and tag that exact main merge commit. A developer can hand the release to another agent by supplying the merged task PR, `dev` SHA, proposed version and validation results.
+- `dev` has PR validation but is not branch-protected, to allow the release maintainer's post-release fast-forward from `main`. Local editing on `dev` does not authorize direct pushes; ordinary publication still uses PRs.
+- Follow [the release procedure](scripts/release/releasing.md): prepare version/changelog for `dev`, then open `dev` → `main`, wait for CI and release authorization, merge with `--merge`, and tag that exact main merge commit. A developer can hand the release to another agent by supplying the merged preparation PR, `dev` SHA, proposed version and validation results.
 - After tagging, fast-forward local `main` and `dev` to the same merge commit and push `dev`. Do not squash/rebase the release PR, delete either long-lived branch, or create a second synchronization merge commit. Synchronizing the branches does not start CI; pushing the tag starts Release.
 
 ## Build and validation

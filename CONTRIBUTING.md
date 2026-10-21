@@ -7,21 +7,36 @@ Thanks for your interest in contributing to Aniyomi!
 
 # Fork development workflow
 
-This fork uses task branches → `dev` → `main`. Start from the fork's development branch:
+For local work, prefer editing directly on `dev` unless the user requests another branch.
+Codex Cloud work uses an isolated task branch based on updated `origin/dev`. `main` is
+the release branch and must not be used for ordinary development.
+
+A fresh local clone starts on `dev`:
 
 ```sh
 git clone --branch dev git@github.com:b1ack0u7/aniyomi.git
 cd aniyomi
+```
+
+For an existing clone, inspect `git status --short`, then use `git fetch origin`,
+`git switch dev` and `git merge --ff-only origin/dev` when safe. Preserve all existing
+changes when switching or updating; never reset a shared branch to match the remote.
+Ordinary local editing does not require creating a task branch.
+
+Implement the change, add relevant coverage and user-facing `CHANGELOG.md` entries under
+`Unreleased`, and run the affected checks listed in [AGENTS.md](AGENTS.md). Leave changes
+unstaged and uncommitted unless the user requests commits.
+
+Use a task branch when the user requests one or when working in Codex Cloud. For an
+authorized PR, transfer work prepared locally on `dev` to a task branch before committing
+and publishing it. Newly created task branches use the `codex/` prefix unless the user
+specifies another name or base:
+
+```sh
 git switch -c codex/my-change
 ```
 
-For an existing clone, use `git fetch origin`, `git switch dev` and
-`git merge --ff-only origin/dev` before creating the task branch. Preserve local changes;
-never reset a shared branch to make it match the remote.
-
-Implement the change, add relevant coverage and user-facing `CHANGELOG.md` entries under
-`Unreleased`, and run the affected checks listed in [AGENTS.md](AGENTS.md). When authorized
-to commit and push, use a Conventional Commit and create a PR targeting `dev`:
+When commits and publication are authorized, use a Conventional Commit and target `dev`:
 
 ```sh
 git push -u origin codex/my-change
@@ -34,8 +49,9 @@ the task PR. Do not use `main` as the target for individual changes.
 
 CI validates PRs targeting both long-lived branches. `main` enforces the successful
 `PR checks` result, an up-to-date branch and merge commits, including for administrators.
-`dev` remains unprotected to permit the release maintainer's fast-forward synchronization;
-contributors and agents still use PRs and wait for CI.
+`dev` remains unprotected to permit the release maintainer's fast-forward synchronization.
+Local editing on `dev` does not authorize direct pushes; ordinary publication still uses
+PRs and waits for CI.
 
 The same agent or another release maintainer can then follow
 [the release procedure](scripts/release/releasing.md). For a handoff, provide the task PR,

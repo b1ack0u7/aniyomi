@@ -117,14 +117,21 @@ only after uninstalling, which is exactly what this build is meant to catch earl
 ## Cutting a release
 
 Task PRs land on `dev`; only a release PR from this repository's `dev` branch reaches
-`main`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for cloning, task branches and handoffs.
+`main`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for local work on `dev`, Codex Cloud
+task branches and handoffs.
 The developer or another release maintainer can perform the following steps once authorized.
 
 ### Prepare the version through dev
 
-Start with an updated, clean `dev`, then prepare the bump on a task branch. Replace
-`1.1.0` with the next three-component version. Write user-facing notes under
-`## Unreleased` in `CHANGELOG.md` before running the script (and commit them first if needed).
+Prepare and review local changes on `dev` by default; use a separate branch when the
+user requests it or when working in Codex Cloud. Once the release-preparation PR is
+authorized, transfer that work to a task branch for publication.
+
+The commands below cover that authorized publication step, starting from an updated,
+clean `dev`. Replace `1.1.0` with the next three-component version. Write user-facing
+notes under `## Unreleased` in `CHANGELOG.md` before running the script, and commit
+them on the preparation branch first if needed. The script creates a commit and
+`--push` publishes it, so those actions require user authorization.
 
 ```sh
 git fetch origin
