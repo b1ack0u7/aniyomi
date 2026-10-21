@@ -83,6 +83,7 @@ internal fun PreferenceItem(
             }
             is Preference.PreferenceItem.SliderPreference -> {
                 BaseSliderItem(
+                    enabled = item.enabled,
                     label = item.title,
                     value = item.value,
                     valueRange = item.valueRange,
