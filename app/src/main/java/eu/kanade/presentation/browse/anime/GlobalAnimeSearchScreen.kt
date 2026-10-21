@@ -1,15 +1,18 @@
 package eu.kanade.presentation.browse.anime
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
+import eu.kanade.presentation.browse.GlobalSearchEmptyScreen
 import eu.kanade.presentation.browse.GlobalSearchErrorResultItem
 import eu.kanade.presentation.browse.GlobalSearchLoadingResultItem
 import eu.kanade.presentation.browse.GlobalSearchResultItem
 import eu.kanade.presentation.browse.anime.components.GlobalAnimeSearchCardRow
 import eu.kanade.presentation.browse.anime.components.GlobalAnimeSearchToolbar
+import eu.kanade.presentation.browse.globalSearchEmptyState
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.AnimeSearchItemResult
@@ -51,6 +54,23 @@ fun GlobalAnimeSearchScreen(
             )
         },
     ) { paddingValues ->
+        val emptyState = globalSearchEmptyState(
+            hasSearched = state.executedQuery != null,
+            totalSources = state.total,
+            visibleSources = state.filteredItems.size,
+            pendingSources = state.total - state.progress,
+            failedSources = state.items.count { it.value is AnimeSearchItemResult.Error },
+            pinnedOnly = state.sourceFilter == AnimeSourceFilter.PinnedOnly,
+        )
+        if (emptyState != null) {
+            GlobalSearchEmptyScreen(
+                state = emptyState,
+                onShowAllSources = { onChangeSearchFilter(AnimeSourceFilter.All) },
+                onShowErrors = onToggleResults,
+                modifier = Modifier.padding(paddingValues),
+            )
+            return@Scaffold
+        }
         GlobalSearchContent(
             items = state.filteredItems,
             contentPadding = paddingValues,

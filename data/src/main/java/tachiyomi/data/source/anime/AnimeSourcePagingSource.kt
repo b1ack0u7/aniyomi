@@ -5,6 +5,9 @@ import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import tachiyomi.core.common.util.lang.SourceSearchQuery
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.items.episode.model.NoEpisodesException
 import tachiyomi.domain.source.anime.repository.AnimeSourcePagingSourceType
@@ -14,8 +17,16 @@ class AnimeSourceSearchPagingSource(
     val query: String,
     val filters: AnimeFilterList,
 ) : AnimeSourcePagingSource(source) {
+    private val searchQuery = SourceSearchQuery(query)
+
     override suspend fun requestNextPage(currentPage: Int): AnimesPage {
-        return source.getSearchAnime(currentPage, query, filters)
+        return searchQuery.search(currentPage, isEmpty = { it.animes.isEmpty() }) { effectiveQuery ->
+            source.getSearchAnime(currentPage, effectiveQuery, filters)
+        }
+    }
+
+    override fun getRefreshKey(state: PagingState<Long, SAnime>): Long? {
+        return if (searchQuery.effectiveQuery != query) 1L else super.getRefreshKey(state)
     }
 }
 
@@ -47,8 +58,10 @@ abstract class AnimeSourcePagingSource(
                     ?: throw NoEpisodesException()
             }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             return LoadResult.Error(e)
         } catch (e: LinkageError) {
+            currentCoroutineContext().ensureActive()
             // An extension built against a newer library than the app bundles; surface it instead of crashing.
             return LoadResult.Error(e)
         }

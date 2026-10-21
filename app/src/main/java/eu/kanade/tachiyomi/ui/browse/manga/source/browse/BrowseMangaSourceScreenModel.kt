@@ -24,12 +24,13 @@ import eu.kanade.tachiyomi.data.cache.MangaCoverCache
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.source.copyStatesFrom
+import eu.kanade.tachiyomi.util.source.mapWithLatestScope
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -108,19 +109,22 @@ class BrowseMangaSourceScreenModel(
     private val hideInLibraryItems = sourcePreferences.hideInMangaLibraryItems().get()
     val mangaPagerFlowFlow = state.map { it.listing }
         .distinctUntilChanged()
-        .map { listing ->
+        .mapWithLatestScope { listing ->
+            val listingScope = this
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga.subscribe(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
                 pagingData.map {
                     networkToLocalManga.await(it.toDomainManga(sourceId))
-                        .let { localManga -> getManga.subscribe(localManga.url, localManga.source) }
-                        .filterNotNull()
-                        .stateIn(ioCoroutineScope)
+                        .let { localManga ->
+                            getManga.subscribe(localManga.url, localManga.source)
+                                .map { it ?: localManga }
+                                .stateIn(listingScope, SharingStarted.WhileSubscribed(5_000), localManga)
+                        }
                 }
                     .filter { !hideInLibraryItems || !it.value.favorite }
             }
-                .cachedIn(ioCoroutineScope)
+                .cachedIn(listingScope)
         }
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
 
@@ -174,7 +178,7 @@ class BrowseMangaSourceScreenModel(
             it.copy(
                 listing = input.copy(
                     query = query ?: input.query,
-                    filters = filters ?: input.filters,
+                    filters = filters?.let { source.getFilterList().copyStatesFrom(it) } ?: input.filters,
                 ),
                 toolbarQuery = query ?: input.query,
             )
@@ -219,7 +223,7 @@ class BrowseMangaSourceScreenModel(
                 Listing.Search(query = genreName, filters = defaultFilters)
             }
             it.copy(
-                filters = defaultFilters,
+                filters = source.getFilterList().copyStatesFrom(defaultFilters),
                 listing = listing,
                 toolbarQuery = listing.query,
             )

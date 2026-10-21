@@ -38,7 +38,7 @@ class MigrateAnimeSearchScreen(private val animeId: Long) : Screen() {
             onToggleResults = screenModel::toggleFilterResults,
             onClickSource = {
                 navigator.push(
-                    AnimeSourceSearchScreen(dialogState.anime!!, it.id, state.searchQuery),
+                    AnimeSourceSearchScreen(dialogState.anime!!, it.id, screenModel.getSourceQuery(it)),
                 )
             },
             onClickItem = {

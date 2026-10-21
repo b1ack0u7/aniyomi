@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.util.source.select
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -134,15 +135,7 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
                             sortDescending = filter.state?.ascending?.not()
                                 ?.takeIf { index == filter.state?.index },
                         ) {
-                            val ascending = if (index == filter.state?.index) {
-                                !filter.state!!.ascending
-                            } else {
-                                filter.state!!.ascending
-                            }
-                            filter.state = Filter.Sort.Selection(
-                                index = index,
-                                ascending = ascending,
-                            )
+                            filter.select(index)
                             onUpdate()
                         }
                     }

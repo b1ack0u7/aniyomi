@@ -14,9 +14,9 @@ class GlobalMangaSearchScreenModel(
     init {
         extensionFilter = initialExtensionFilter
         if (initialQuery.isNotBlank() || !initialExtensionFilter.isNullOrBlank()) {
-            if (extensionFilter != null) {
-                // we're going to use custom extension filter instead
-                setSourceFilter(MangaSourceFilter.All)
+            if (!extensionFilter.isNullOrEmpty()) {
+                // Keep this extension's scope separate from the saved global source filter.
+                applySourceFilter(MangaSourceFilter.All)
             }
             search()
         }

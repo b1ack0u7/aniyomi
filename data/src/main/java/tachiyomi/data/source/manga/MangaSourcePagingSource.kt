@@ -5,6 +5,9 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import tachiyomi.core.common.util.lang.SourceSearchQuery
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.items.chapter.model.NoChaptersException
 import tachiyomi.domain.source.manga.repository.SourcePagingSourceType
@@ -17,8 +20,16 @@ class SourceSearchPagingSource(
     SourcePagingSource(
         source,
     ) {
+    private val searchQuery = SourceSearchQuery(query)
+
     override suspend fun requestNextPage(currentPage: Int): MangasPage {
-        return source.getSearchManga(currentPage, query, filters)
+        return searchQuery.search(currentPage, isEmpty = { it.mangas.isEmpty() }) { effectiveQuery ->
+            source.getSearchManga(currentPage, effectiveQuery, filters)
+        }
+    }
+
+    override fun getRefreshKey(state: PagingState<Long, SManga>): Long? {
+        return if (searchQuery.effectiveQuery != query) 1L else super.getRefreshKey(state)
     }
 }
 
@@ -50,8 +61,10 @@ abstract class SourcePagingSource(
                     ?: throw NoChaptersException()
             }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             return LoadResult.Error(e)
         } catch (e: LinkageError) {
+            currentCoroutineContext().ensureActive()
             // An extension built against a newer library than the app bundles; surface it instead of crashing.
             return LoadResult.Error(e)
         }

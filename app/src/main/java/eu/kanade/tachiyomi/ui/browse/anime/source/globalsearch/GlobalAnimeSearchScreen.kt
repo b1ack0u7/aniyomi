@@ -81,7 +81,7 @@ class GlobalAnimeSearchScreen(
                 onChangeSearchFilter = screenModel::setSourceFilter,
                 onToggleResults = screenModel::toggleFilterResults,
                 onClickSource = {
-                    navigator.push(BrowseAnimeSourceScreen(it.id, state.searchQuery))
+                    navigator.push(BrowseAnimeSourceScreen(it.id, screenModel.getSourceQuery(it)))
                 },
                 onClickItem = { navigator.push(AnimeScreen(it.id, true)) },
                 onLongClickItem = { navigator.push(AnimeScreen(it.id, true)) },

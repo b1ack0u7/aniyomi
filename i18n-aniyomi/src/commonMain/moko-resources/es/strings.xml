@@ -606,4 +606,10 @@
     <string name="smart_download_waiting">En espera por la fuente · se reanudará después de %1$s</string>
     <string name="smart_download_challenge">Fuente en pausa · abre WebView para resolver el desafío de Cloudflare y luego reanuda las descargas</string>
     <string name="smart_download_retry">La fuente ha limitado las solicitudes · se reanudará después de %1$s</string>
+    <string name="global_search_prompt">Escribe un título para buscar en tus fuentes habilitadas.</string>
+    <string name="global_search_no_pinned_sources">No hay fuentes fijadas habilitadas para buscar. Elige todas las fuentes o habilita una fuente fijada.</string>
+    <string name="global_search_no_enabled_sources">No hay fuentes habilitadas para buscar. Revisa tus extensiones instaladas, idiomas y ajustes de fuentes.</string>
+    <string name="global_search_hidden_errors">Algunas fuentes fallaron. Muestra sus errores para reintentar o abrirlas en WebView.</string>
+    <string name="global_search_all_sources">Buscar en todas las fuentes habilitadas</string>
+    <string name="global_search_show_errors">Mostrar errores</string>
 </resources>

@@ -1,8 +1,9 @@
 package eu.kanade.tachiyomi.data.suggestions
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -44,14 +45,33 @@ internal class SourceSearchFallback(
         var hasNextPage: Boolean,
     )
 
+    internal data class CursorState(
+        val query: String,
+        val reason: SuggestionReason,
+        val nextPage: Int,
+        val hasNextPage: Boolean,
+    )
+
+    internal data class CachedSearch(val items: List<SuggestionItem>, val cursors: List<CursorState>)
+
     private val boundedMaxResults = maxResults.coerceIn(1, 100)
     private val boundedTotalLimit = totalLimit.coerceIn(boundedMaxResults, ABSOLUTE_LIMIT)
     private val tiers = buildTiers(seed, splitCreators(author, artist), cleanGenres(genres))
+    private val cacheKey = SuggestionCache.makeKey(
+        "search:$sourceId:limit:$boundedMaxResults",
+        entryUrl,
+        seed.mediaType.name,
+        seed.candidateTitles + tiers.flatMap { tier -> tier.queries.map { "${tier.reason}:$it" } },
+        description = seed.description,
+        author = listOfNotNull(author, artist).joinToString("|"),
+    )
 
     private val lock = Mutex()
     private val searchPermits = Semaphore(MAX_CONCURRENT_SEARCHES)
     private val results = LinkedHashMap<String, SuggestionItem>()
-    private val cursors = mutableListOf<Cursor>()
+    private val cursors = tiers.flatMap { tier ->
+        tier.queries.map { Cursor(it, tier.reason, nextPage = 1, hasNextPage = true) }
+    }.toMutableList()
 
     private var authorAdded = 0
     private var genreAdded = 0
@@ -72,22 +92,15 @@ internal class SourceSearchFallback(
     }
 
     suspend fun loadInitial(onProgress: ((List<SuggestionItem>) -> Unit)? = null): List<SuggestionItem> {
-        val cacheKey = SuggestionCache.makeKey(
-            "search:$sourceId:limit:$boundedMaxResults",
-            entryUrl,
-            seed.mediaType.name,
-            seed.candidateTitles,
-        )
-        SuggestionCache.get(cacheKey)?.let { cached ->
-            logcat { "[SearchFallback] CACHE HIT for '$entryTitle' (${cached.size} items)" }
+        SuggestionCache.getSourceSearch(cacheKey)?.let { cached ->
+            logcat { "[SearchFallback] CACHE HIT for '$entryTitle' (${cached.items.size} items)" }
             lock.withLock {
-                cached.forEach { results.putIfAbsent(it.providerUrl, it) }
-                // The cache holds items, not cursors: assume the queries can go one page deeper
-                // and let the first failed page prune them.
-                if (cursors.isEmpty()) seedCursorsForCachedRun()
+                cached.items.forEach { results.putIfAbsent(it.providerUrl, it) }
+                cursors.clear()
+                cached.cursors.mapTo(cursors) { Cursor(it.query, it.reason, it.nextPage, it.hasNextPage) }
                 refreshHasNextPage()
             }
-            return cached
+            return cached.items
         }
 
         logcat {
@@ -95,6 +108,7 @@ internal class SourceSearchFallback(
                 "candidates=${seed.candidateTitles}, tiers=${tiers.map { it.queries.size }}"
         }
         resetPassQuotas()
+        var hadFailure = false
 
         for (tier in tiers) {
             if (lock.withLock { results.size } >= boundedMaxResults) {
@@ -105,17 +119,23 @@ internal class SourceSearchFallback(
             logcat { "[SearchFallback] ${tier.name}: ${tier.queries}" }
 
             coroutineScope {
-                tier.queries.forEach { query ->
-                    launch {
-                        if (lock.withLock { results.size } >= boundedMaxResults) return@launch
-                        val page = fetchPage(query, 1) ?: return@launch
-                        lock.withLock { recordCursor(query, tier.reason, page) }
-                        if (page.candidates.isEmpty()) return@launch
+                cursors.filter { it.reason == tier.reason && it.query in tier.queries }.map { cursor ->
+                    async {
+                        searchPermits.withPermit {
+                            if (lock.withLock { results.size } >= boundedMaxResults) return@withPermit
+                            val page = fetchPage(cursor.query, cursor.nextPage)
+                            if (page == null) {
+                                lock.withLock { hadFailure = true }
+                                return@withPermit
+                            }
+                            lock.withLock { advanceCursor(cursor, page) }
+                            if (page.candidates.isEmpty()) return@withPermit
 
-                        val snapshot = absorb(page.candidates, tier.reason, boundedMaxResults)
-                        if (snapshot != null) onProgress?.invoke(snapshot)
+                            val snapshot = absorb(page.candidates, tier.reason, boundedMaxResults)
+                            if (snapshot != null) onProgress?.invoke(snapshot)
+                        }
                     }
-                }
+                }.awaitAll()
             }
         }
 
@@ -124,7 +144,15 @@ internal class SourceSearchFallback(
             results.values.toList()
         }
         logcat { "[SearchFallback] END for '$entryTitle': ${items.size} items" }
-        SuggestionCache.put(cacheKey, items)
+        if (!hadFailure) {
+            val snapshot = lock.withLock {
+                CachedSearch(
+                    items,
+                    cursors.map { CursorState(it.query, it.reason, it.nextPage, it.hasNextPage) },
+                )
+            }
+            SuggestionCache.putSourceSearch(cacheKey, snapshot)
+        }
         return items
     }
 
@@ -159,31 +187,36 @@ internal class SourceSearchFallback(
         resetPassQuotas()
         logcat { "[SearchFallback] PAGE for '$entryTitle': ${batch.map { "${it.query}@${it.nextPage}" }}" }
         val before = lock.withLock { results.size }
+        val failedCursors = mutableListOf<Cursor>()
 
         coroutineScope {
-            batch.forEach { cursor ->
-                launch {
-                    if (lock.withLock { results.size } >= boundedTotalLimit) return@launch
-                    val page = fetchPage(cursor.query, cursor.nextPage)
-                    if (page == null) {
-                        lock.withLock { cursor.hasNextPage = false }
-                        return@launch
+            batch.map { cursor ->
+                async {
+                    searchPermits.withPermit {
+                        if (lock.withLock { results.size } >= boundedTotalLimit) return@withPermit
+                        val page = fetchPage(cursor.query, cursor.nextPage)
+                        if (page == null) {
+                            lock.withLock { failedCursors += cursor }
+                            return@withPermit
+                        }
+                        lock.withLock { advanceCursor(cursor, page) }
+                        if (page.candidates.isEmpty()) return@withPermit
+                        absorb(page.candidates, cursor.reason, boundedTotalLimit)
                     }
-                    lock.withLock {
-                        cursor.nextPage += 1
-                        cursor.hasNextPage = page.hasNextPage && page.candidates.isNotEmpty()
-                    }
-                    if (page.candidates.isEmpty()) return@launch
-                    absorb(page.candidates, cursor.reason, boundedTotalLimit)
                 }
-            }
+            }.awaitAll()
         }
 
-        return lock.withLock { results.size == before && cursors.any { it.hasNextPage } }
+        return lock.withLock {
+            val failed = batch.filter { it in failedCursors }
+            cursors.removeAll(failed.toSet())
+            cursors.addAll(failed)
+            failed.isEmpty() && results.size == before && cursors.any { it.hasNextPage }
+        }
     }
 
     private suspend fun fetchPage(query: String, page: Int): SearchPage? = try {
-        searchPermits.withPermit { search(query, page) }
+        search(query, page)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -191,17 +224,9 @@ internal class SourceSearchFallback(
         null
     }
 
-    private fun recordCursor(query: String, reason: SuggestionReason, page: SearchPage) {
-        if (!page.hasNextPage || page.candidates.isEmpty()) return
-        cursors += Cursor(query, reason, nextPage = 2, hasNextPage = true)
-    }
-
-    private fun seedCursorsForCachedRun() {
-        tiers.forEach { tier ->
-            tier.queries.forEach { query ->
-                cursors += Cursor(query, tier.reason, nextPage = 2, hasNextPage = true)
-            }
-        }
+    private fun advanceCursor(cursor: Cursor, page: SearchPage) {
+        cursor.nextPage += 1
+        cursor.hasNextPage = page.hasNextPage && page.candidates.isNotEmpty()
     }
 
     // Returns the accumulated list when anything was added, null otherwise.

@@ -51,6 +51,11 @@ class SourcePreferences(
         false,
     )
 
+    fun globalSearchPinnedSourcesOnly() = preferenceStore.getBoolean(
+        Preference.appStateKey("global_search_pinned_only"),
+        true,
+    )
+
     // Mixture Sources
 
     fun disabledAnimeSources() = preferenceStore.getStringSet("hidden_anime_catalogues", emptySet())

@@ -666,4 +666,10 @@
     <string name="smart_download_waiting">Waiting for source · resumes after %1$s</string>
     <string name="smart_download_challenge">Source paused · open WebView to resolve Cloudflare, then resume downloads</string>
     <string name="smart_download_retry">Source temporarily limited · resumes after %1$s</string>
+    <string name="global_search_prompt">Enter a title to search your enabled sources.</string>
+    <string name="global_search_no_pinned_sources">No pinned sources are enabled for search. Choose all sources or enable a pinned source.</string>
+    <string name="global_search_no_enabled_sources">No sources are enabled for search. Check your installed extensions, languages, and source settings.</string>
+    <string name="global_search_hidden_errors">Some sources failed. Show their errors to retry or open them in WebView.</string>
+    <string name="global_search_all_sources">Search all enabled sources</string>
+    <string name="global_search_show_errors">Show errors</string>
 </resources>
