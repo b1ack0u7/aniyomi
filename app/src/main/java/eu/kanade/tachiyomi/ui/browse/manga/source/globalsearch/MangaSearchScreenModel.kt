@@ -19,6 +19,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -39,7 +40,7 @@ abstract class MangaSearchScreenModel(
     private val networkToLocalManga: NetworkToLocalManga = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
     private val preferences: SourcePreferences = Injekt.get(),
-    coroutineScope: CoroutineScope? = null,
+    private val coroutineScope: CoroutineScope? = null,
 ) : StateScreenModel<MangaSearchScreenModel.State>(initialState) {
 
     private val requests = SearchRequestCoordinator(coroutineScope ?: ioCoroutineScope)
@@ -151,21 +152,36 @@ abstract class MangaSearchScreenModel(
         pendingWebViewRetrySourceId = null
         val session = requests.newSearch()
         searchSession = session
-        val sources = getSelectedSources()
+        fun performSearch() {
+            val sources = getSelectedSources()
 
-        mutableState.update { state ->
-            val items = sources.associateWith { source ->
-                if (sameQuery) state.items[source] ?: MangaSearchItemResult.Loading else MangaSearchItemResult.Loading
-            }.toPersistentMap()
-            state.copy(
-                executedQuery = query,
-                items = items.toSortedMap(sortComparator(items)).toPersistentMap(),
-            )
+            mutableState.update { state ->
+                val items = sources.associateWith { source ->
+                    if (sameQuery) {
+                        state.items[source] ?: MangaSearchItemResult.Loading
+                    } else {
+                        MangaSearchItemResult.Loading
+                    }
+                }.toPersistentMap()
+                state.copy(
+                    executedQuery = query,
+                    items = items.toSortedMap(sortComparator(items)).toPersistentMap(),
+                )
+            }
+
+            sources.forEach { source ->
+                if (state.value.items[source] is MangaSearchItemResult.Loading) {
+                    session.launch(source.id) { searchSource(session, source, query) }
+                }
+            }
         }
 
-        sources.forEach { source ->
-            if (state.value.items[source] is MangaSearchItemResult.Loading) {
-                session.launch(source.id) { searchSource(session, source, query) }
+        if (sourceManager.isInitialized.value) {
+            performSearch()
+        } else {
+            (coroutineScope ?: screenModelScope).launch {
+                sourceManager.isInitialized.first { it }
+                if (session.isCurrent) performSearch()
             }
         }
     }

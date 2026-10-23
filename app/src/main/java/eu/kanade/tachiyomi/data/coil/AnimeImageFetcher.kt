@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.data.cache.AnimeBackgroundCache
 import eu.kanade.tachiyomi.data.cache.AnimeCoverCache
 import eu.kanade.tachiyomi.data.coil.AnimeImageFetcher.Companion.USE_CUSTOM_COVER_KEY
 import eu.kanade.tachiyomi.network.await
+import kotlinx.coroutines.flow.first
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.Call
@@ -56,6 +57,7 @@ class AnimeImageFetcher(
     private val sourceLazy: Lazy<AnimeHttpSource?>,
     private val callFactoryLazy: Lazy<Call.Factory>,
     private val imageLoader: ImageLoader,
+    private val awaitSource: suspend () -> Unit,
 ) : Fetcher {
 
     private val diskCacheKey: String
@@ -169,6 +171,7 @@ class AnimeImageFetcher(
     }
 
     private suspend fun executeNetworkRequest(): Response {
+        awaitSource()
         val client = sourceLazy.value?.client ?: callFactoryLazy.value
         val response = client.newCall(newRequest()).await()
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
@@ -330,6 +333,7 @@ class AnimeImageFetcher(
                 sourceLazy = lazy { sourceManager.get(data.source) as? AnimeHttpSource },
                 callFactoryLazy = callFactoryLazy,
                 imageLoader = imageLoader,
+                awaitSource = { sourceManager.isInitialized.first { it } },
             )
         }
     }
@@ -352,6 +356,7 @@ class AnimeImageFetcher(
                 sourceLazy = lazy { sourceManager.get(data.sourceId) as? AnimeHttpSource },
                 callFactoryLazy = callFactoryLazy,
                 imageLoader = imageLoader,
+                awaitSource = { sourceManager.isInitialized.first { it } },
             )
         }
     }

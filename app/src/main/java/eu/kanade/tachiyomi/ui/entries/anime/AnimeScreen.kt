@@ -454,6 +454,7 @@ class AnimeScreen(
                     url = url,
                     initialTitle = anime_?.title,
                     sourceId = source_?.id,
+                    isAnime = true,
                 ),
             )
         }

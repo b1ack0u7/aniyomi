@@ -612,4 +612,13 @@
     <string name="global_search_hidden_errors">Algunas fuentes fallaron. Muestra sus errores para reintentar o abrirlas en WebView.</string>
     <string name="global_search_all_sources">Buscar en todas las fuentes habilitadas</string>
     <string name="global_search_show_errors">Mostrar errores</string>
+    <string name="pref_player_buffer_wait">Búfer antes de reproducir</string>
+    <string name="pref_player_buffer_default">Configuración predeterminada de mpv. Los cambios se aplican al volver a abrir el reproductor.</string>
+    <string name="pref_player_buffer_wait_summary">Objetivo de %1$d segundos antes de iniciar, reanudar o cambiar de posición. Puede reanudarse antes al llegar al final del archivo o al límite de caché. Se aplica al volver a abrir el reproductor.</string>
+    <string name="pref_player_max_switches">Cambios automáticos por episodio</string>
+    <string name="pref_player_max_switches_summary">Hasta %1$d alternativas automáticas en total, sumando todos los motivos de fallo. La selección manual no reinicia este límite.</string>
+    <string name="player_switch_budget_exhausted">Se alcanzó el límite de cambios automáticos para este episodio. Elige un servidor para continuar.</string>
+    <string name="player_choose_server">Elegir servidor</string>
+    <string name="player_filling_buffer">Llenando el búfer: aproximadamente %1$d / %2$d s</string>
+    <string name="player_filling_buffer_unknown">Llenando el búfer…</string>
 </resources>

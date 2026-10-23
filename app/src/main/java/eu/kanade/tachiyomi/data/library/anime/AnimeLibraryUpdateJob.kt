@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -112,6 +113,7 @@ class AnimeLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
     private var animeToUpdate: List<LibraryAnime> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        sourceManager.isInitialized.first { it }
         if (!runLock.tryLock()) return Result.retry()
         return try {
             updateLibrary()

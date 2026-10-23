@@ -81,6 +81,7 @@ fun animeExtensionsTab(
                                 url = it.baseUrl,
                                 initialTitle = it.name,
                                 sourceId = it.id,
+                                isAnime = true,
                             ),
                         )
                     }

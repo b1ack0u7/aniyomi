@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.GetApp
@@ -37,7 +39,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -148,6 +152,8 @@ private fun ExtensionContent(
 ) {
     val context = LocalContext.current
     var trustState by remember { mutableStateOf<MangaExtension.Untrusted?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
     val installGranted = rememberRequestPackageInstallsPermissionState(initialValue = true)
 
     FastScrollLazyColumn(
@@ -218,7 +224,9 @@ private fun ExtensionContent(
                     onClickItem = {
                         when (it) {
                             is MangaExtension.Available -> onInstallExtension(it)
-                            is MangaExtension.Installed -> onOpenExtension(it)
+                            is MangaExtension.Installed -> {
+                                if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
+                            }
                             is MangaExtension.Untrusted -> {
                                 trustState = it
                             }
@@ -228,7 +236,9 @@ private fun ExtensionContent(
                     onClickItemSecondaryAction = {
                         when (it) {
                             is MangaExtension.Available -> onOpenWebView(it)
-                            is MangaExtension.Installed -> onOpenExtension(it)
+                            is MangaExtension.Installed -> {
+                                if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
+                            }
                             else -> {}
                         }
                     },
@@ -240,7 +250,7 @@ private fun ExtensionContent(
                                 if (it.hasUpdate) {
                                     onUpdateExtension(it)
                                 } else {
-                                    onOpenExtension(it)
+                                    if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
                                 }
                             }
 
@@ -253,6 +263,22 @@ private fun ExtensionContent(
             }
         }
     }
+    loadError?.let { error ->
+        AlertDialog(
+            onDismissRequest = { loadError = null },
+            title = { Text(stringResource(MR.strings.ext_load_error)) },
+            text = { Text(error, modifier = Modifier.verticalScroll(rememberScrollState())) },
+            confirmButton = {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) {
+                    Text(stringResource(MR.strings.action_copy_to_clipboard))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { loadError = null }) { Text(stringResource(MR.strings.action_close)) }
+            },
+        )
+    }
+
     if (trustState != null) {
         ExtensionTrustDialog(
             onClickConfirm = {
@@ -370,6 +396,7 @@ private fun ExtensionItemContent(
                 }
 
                 val warning = when {
+                    extension is MangaExtension.Installed && extension.loadError != null -> MR.strings.ext_load_error
                     extension is MangaExtension.Untrusted -> MR.strings.ext_untrusted
                     extension is MangaExtension.Installed && extension.isObsolete -> MR.strings.ext_obsolete
                     extension.isNsfw -> MR.strings.ext_nsfw_short

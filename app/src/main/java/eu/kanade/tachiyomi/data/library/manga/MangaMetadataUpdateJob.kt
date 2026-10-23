@@ -23,6 +23,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
@@ -51,6 +52,7 @@ class MangaMetadataUpdateJob(private val context: Context, workerParams: WorkerP
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        sourceManager.isInitialized.first { it }
         try {
             setForeground(getForegroundInfo())
         } catch (e: IllegalStateException) {

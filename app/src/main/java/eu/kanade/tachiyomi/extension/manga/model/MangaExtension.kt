@@ -29,6 +29,8 @@ sealed class MangaExtension {
         val isObsolete: Boolean = false,
         val isShared: Boolean,
         val repoUrl: String? = null,
+        val signatureHashes: Set<String> = emptySet(),
+        val loadError: String? = null,
     ) : MangaExtension()
 
     data class Available(
@@ -43,6 +45,7 @@ sealed class MangaExtension {
         val apkUrl: String,
         val iconUrl: String,
         val repoUrl: String,
+        val repoSigningKey: String = "",
     ) : MangaExtension() {
 
         data class MangaSource(

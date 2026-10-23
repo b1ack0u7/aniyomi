@@ -99,6 +99,7 @@ data class AnimeSourceSearchScreen(
                             url = source.baseUrl,
                             initialTitle = source.name,
                             sourceId = source.id,
+                            isAnime = true,
                         ),
                     )
                 },

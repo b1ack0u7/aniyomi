@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.GetApp
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -28,6 +31,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,7 +39,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -146,6 +152,8 @@ private fun AnimeExtensionContent(
 ) {
     val context = LocalContext.current
     var trustState by remember { mutableStateOf<AnimeExtension.Untrusted?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
     val installGranted = rememberRequestPackageInstallsPermissionState(initialValue = true)
 
     FastScrollLazyColumn(
@@ -216,7 +224,9 @@ private fun AnimeExtensionContent(
                     onClickItem = {
                         when (it) {
                             is AnimeExtension.Available -> onInstallExtension(it)
-                            is AnimeExtension.Installed -> onOpenExtension(it)
+                            is AnimeExtension.Installed -> {
+                                if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
+                            }
                             is AnimeExtension.Untrusted -> {
                                 trustState = it
                             }
@@ -226,7 +236,9 @@ private fun AnimeExtensionContent(
                     onClickItemSecondaryAction = {
                         when (it) {
                             is AnimeExtension.Available -> onOpenWebView(it)
-                            is AnimeExtension.Installed -> onOpenExtension(it)
+                            is AnimeExtension.Installed -> {
+                                if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
+                            }
                             else -> {}
                         }
                     },
@@ -238,7 +250,7 @@ private fun AnimeExtensionContent(
                                 if (it.hasUpdate) {
                                     onUpdateExtension(it)
                                 } else {
-                                    onOpenExtension(it)
+                                    if (it.loadError != null) loadError = it.loadError else onOpenExtension(it)
                                 }
                             }
 
@@ -251,6 +263,22 @@ private fun AnimeExtensionContent(
             }
         }
     }
+    loadError?.let { error ->
+        AlertDialog(
+            onDismissRequest = { loadError = null },
+            title = { Text(stringResource(MR.strings.ext_load_error)) },
+            text = { Text(error, modifier = Modifier.verticalScroll(rememberScrollState())) },
+            confirmButton = {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) {
+                    Text(stringResource(MR.strings.action_copy_to_clipboard))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { loadError = null }) { Text(stringResource(MR.strings.action_close)) }
+            },
+        )
+    }
+
     if (trustState != null) {
         ExtensionTrustDialog(
             onClickConfirm = {
@@ -368,6 +396,7 @@ private fun AnimeExtensionItemContent(
                 }
 
                 val warning = when {
+                    extension is AnimeExtension.Installed && extension.loadError != null -> MR.strings.ext_load_error
                     extension is AnimeExtension.Untrusted -> MR.strings.ext_untrusted
                     extension is AnimeExtension.Installed && extension.isObsolete -> MR.strings.ext_obsolete
                     extension.isNsfw -> MR.strings.ext_nsfw_short

@@ -93,6 +93,7 @@ class GlobalAnimeSearchScreen(
                             url = source.baseUrl,
                             initialTitle = source.name,
                             sourceId = source.id,
+                            isAnime = true,
                         ),
                     )
                 },

@@ -563,11 +563,32 @@ class GlobalSearchScreenModelTest {
         }
     }
 
+    @Test
+    fun `search waits for sources and discards queries superseded during initialization`() = runBlocking {
+        for (anime in listOf(true, false)) {
+            val initialized = MutableStateFlow(false)
+            val requests = CopyOnWriteArrayList<String>()
+            harness(anime, initialized = initialized) { _, query ->
+                requests += query
+                query
+            }.use { harness ->
+                harness.submit("Old query")
+                harness.submit("New query")
+                requests shouldBe emptyList()
+                initialized.value = true
+                harness.awaitTitle(1, "New query")
+                harness.awaitIdle()
+                requests shouldBe listOf("New query")
+            }
+        }
+    }
+
     private fun harness(
         anime: Boolean,
         sourceCount: Int = 1,
         sameName: Boolean = false,
         settings: BooleanSettings = BooleanSettings(pinnedOnly = false, observe = false),
+        initialized: MutableStateFlow<Boolean> = MutableStateFlow(true),
         respond: suspend (Long, String) -> String?,
     ): Harness {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -581,9 +602,9 @@ class GlobalSearchScreenModelTest {
             every { globalSearchFilterState() } answers { settings.preference(HAS_RESULTS_KEY, false) }
         }
         return if (anime) {
-            animeHarness(scope, preferences, sourceCount, sameName, respond)
+            animeHarness(scope, preferences, sourceCount, sameName, initialized, respond)
         } else {
-            mangaHarness(scope, preferences, sourceCount, sameName, respond)
+            mangaHarness(scope, preferences, sourceCount, sameName, initialized, respond)
         }
     }
 
@@ -592,6 +613,7 @@ class GlobalSearchScreenModelTest {
         preferences: SourcePreferences,
         sourceCount: Int,
         sameName: Boolean,
+        initialized: MutableStateFlow<Boolean>,
         respond: suspend (Long, String) -> String?,
     ): Harness {
         val sources = (1..sourceCount).map { index ->
@@ -602,7 +624,7 @@ class GlobalSearchScreenModelTest {
             )
         }
         val sourceManager = object : AnimeSourceManager {
-            override val isInitialized = MutableStateFlow(true)
+            override val isInitialized = initialized
             override val catalogueSources = flowOf(sources)
             override fun get(sourceKey: Long) = sources.firstOrNull { it.id == sourceKey }
             override fun getOrStub(sourceKey: Long): AnimeSource = sources.first { it.id == sourceKey }
@@ -668,6 +690,7 @@ class GlobalSearchScreenModelTest {
         preferences: SourcePreferences,
         sourceCount: Int,
         sameName: Boolean,
+        initialized: MutableStateFlow<Boolean>,
         respond: suspend (Long, String) -> String?,
     ): Harness {
         val sources = (1..sourceCount).map { index ->
@@ -678,7 +701,7 @@ class GlobalSearchScreenModelTest {
             )
         }
         val sourceManager = object : MangaSourceManager {
-            override val isInitialized = MutableStateFlow(true)
+            override val isInitialized = initialized
             override val catalogueSources = flowOf(sources)
             override fun get(sourceKey: Long) = sources.firstOrNull { it.id == sourceKey }
             override fun getOrStub(sourceKey: Long): MangaSource = sources.first { it.id == sourceKey }

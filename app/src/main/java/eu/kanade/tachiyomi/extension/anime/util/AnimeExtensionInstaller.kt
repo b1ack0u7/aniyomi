@@ -57,6 +57,8 @@ internal class AnimeExtensionInstaller(private val context: Context) {
      */
     private val activeDownloads = hashMapOf<String, Long>()
 
+    private val requestedExtensions = hashMapOf<Long, AnimeExtension.Available>()
+
     private val downloadsStateFlows = hashMapOf<Long, MutableStateFlow<InstallStep>>()
 
     private val extensionInstaller = Injekt.get<BasePreferences>().extensionInstaller()
@@ -68,7 +70,7 @@ internal class AnimeExtensionInstaller(private val context: Context) {
      * @param url The url of the apk.
      * @param extension The extension to install.
      */
-    fun downloadAndInstall(url: String, extension: AnimeExtension): Flow<InstallStep> {
+    fun downloadAndInstall(url: String, extension: AnimeExtension.Available): Flow<InstallStep> {
         val pkgName = extension.pkgName
 
         val oldDownload = activeDownloads[pkgName]
@@ -92,6 +94,7 @@ internal class AnimeExtensionInstaller(private val context: Context) {
 
         val id = downloadManager.enqueue(request)
         activeDownloads[pkgName] = id
+        requestedExtensions[id] = extension
 
         val downloadStateFlow = MutableStateFlow(InstallStep.Pending)
         downloadsStateFlows[id] = downloadStateFlow
@@ -250,6 +253,7 @@ internal class AnimeExtensionInstaller(private val context: Context) {
         if (downloadId != null) {
             downloadManager.remove(downloadId)
             downloadsStateFlows.remove(downloadId)
+            requestedExtensions.remove(downloadId)
         }
         if (activeDownloads.isEmpty()) {
             downloadReceiver.unregister()
@@ -313,7 +317,20 @@ internal class AnimeExtensionInstaller(private val context: Context) {
                         cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI),
                     ).removePrefix(FILE_SCHEME)
 
-                    installApk(id, File(localUri).getUriCompat(context))
+                    val file = File(localUri)
+                    val extension = requestedExtensions[id]
+                    val valid = try {
+                        extension != null && AnimeExtensionLoader.isValidDownloadedApk(context, file, extension)
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e) { "Failed to verify downloaded extension" }
+                        false
+                    }
+                    if (valid) {
+                        installApk(id, file.getUriCompat(context))
+                    } else {
+                        logcat(LogPriority.ERROR) { "Downloaded extension does not match its repository signature" }
+                        updateInstallStep(id, InstallStep.Error)
+                    }
                 }
             }
         }

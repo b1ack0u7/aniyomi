@@ -31,6 +31,8 @@ sealed class AnimeExtension {
         val isObsolete: Boolean = false,
         val isShared: Boolean,
         val repoUrl: String? = null,
+        val signatureHashes: Set<String> = emptySet(),
+        val loadError: String? = null,
     ) : AnimeExtension()
 
     data class Available(
@@ -46,6 +48,7 @@ sealed class AnimeExtension {
         val apkName: String,
         val iconUrl: String,
         val repoUrl: String,
+        val repoSigningKey: String = "",
     ) : AnimeExtension() {
 
         data class AnimeSource(
