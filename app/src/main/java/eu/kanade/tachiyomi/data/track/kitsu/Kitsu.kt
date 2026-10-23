@@ -20,7 +20,6 @@ import kotlinx.serialization.json.Json
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import uy.kohesive.injekt.injectLazy
-import java.text.DecimalFormat
 import tachiyomi.domain.track.anime.model.AnimeTrack as DomainAnimeTrack
 import tachiyomi.domain.track.manga.model.MangaTrack as DomainMangaTrack
 
@@ -94,24 +93,15 @@ class Kitsu(id: Long) :
 
     override fun getCompletionStatus(): Long = COMPLETED
 
-    override fun getScoreList(): ImmutableList<String> {
-        val df = DecimalFormat("0.#")
-        return (listOf("0") + IntRange(2, 20).map { df.format(it / 2f) }).toImmutableList()
-    }
+    private fun ratingSystem() = KitsuRatingSystem.fromPreference(trackPreferences.kitsuScoreType().get())
 
-    override fun indexToScore(index: Int): Double {
-        return if (index > 0) (index + 1) / 2.0 else 0.0
-    }
+    override fun getScoreList(): ImmutableList<String> = ratingSystem().scoreList().toImmutableList()
 
-    override fun displayScore(track: DomainMangaTrack): String {
-        val df = DecimalFormat("0.#")
-        return df.format(track.score)
-    }
+    override fun indexToScore(index: Int): Double = ratingSystem().indexToScore(index)
 
-    override fun displayScore(track: DomainAnimeTrack): String {
-        val df = DecimalFormat("0.#")
-        return df.format(track.score)
-    }
+    override fun displayScore(track: DomainMangaTrack): String = ratingSystem().displayScore(track.score)
+
+    override fun displayScore(track: DomainAnimeTrack): String = ratingSystem().displayScore(track.score)
 
     private suspend fun add(track: MangaTrack): MangaTrack {
         return api.addLibManga(track, getUserId())
@@ -202,10 +192,16 @@ class Kitsu(id: Long) :
     }
 
     override suspend fun searchManga(query: String): List<MangaTrackSearch> {
+        if (query.startsWith("id:")) {
+            return api.getMangaDetails(query.substringAfter("id:").trim())?.let(::listOf) ?: emptyList()
+        }
         return api.search(query)
     }
 
     override suspend fun searchAnime(query: String): List<AnimeTrackSearch> {
+        if (query.startsWith("id:")) {
+            return api.getAnimeDetails(query.substringAfter("id:").trim())?.let(::listOf) ?: emptyList()
+        }
         return api.searchAnime(query)
     }
 
@@ -226,8 +222,20 @@ class Kitsu(id: Long) :
     override suspend fun login(username: String, password: String) {
         val token = api.login(username, password)
         interceptor.newAuth(token)
-        val userId = api.getCurrentUser()
-        saveCredentials(username, userId)
+        val user = api.getCurrentUser()
+        saveUserConfig {
+            trackPreferences.kitsuScoreType().set(KitsuRatingSystem.fromPreference(user.ratingSystem).preferenceValue)
+            saveDisplayUsername(user.profile.name)
+            saveCredentials(username, user.id)
+        }
+    }
+
+    override suspend fun updateUserConfig() {
+        val user = api.getCurrentUser()
+        saveUserConfig {
+            trackPreferences.kitsuScoreType().set(KitsuRatingSystem.fromPreference(user.ratingSystem).preferenceValue)
+            saveDisplayUsername(user.profile.name)
+        }
     }
 
     override fun logout() {

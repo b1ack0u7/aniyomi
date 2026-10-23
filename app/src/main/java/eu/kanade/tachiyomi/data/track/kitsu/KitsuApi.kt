@@ -3,10 +3,12 @@ package eu.kanade.tachiyomi.data.track.kitsu
 import androidx.core.net.toUri
 import eu.kanade.tachiyomi.data.database.models.anime.AnimeTrack
 import eu.kanade.tachiyomi.data.database.models.manga.MangaTrack
+import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuAccount
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuAddEntryResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuAlgoliaSearchResult
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuCurrentUserResult
+import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuCurrentAccountResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuListSearchResult
+import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuMediaResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuOAuth
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuSearchResult
 import eu.kanade.tachiyomi.data.track.model.AnimeTrackSearch
@@ -24,6 +26,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.FormBody
 import okhttp3.Headers.Companion.headersOf
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -409,18 +412,36 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
         }
     }
 
-    suspend fun getCurrentUser(): String {
-        return withIOContext {
-            val url = "${BASE_URL}users".toUri().buildUpon()
-                .encodedQuery("filter[self]=true")
-                .build()
-            with(json) {
-                authClient.newCall(GET(url.toString()))
-                    .awaitSuccess()
-                    .parseAs<KitsuCurrentUserResult>()
-                    .data[0]
-                    .id
-            }
+    internal suspend fun getCurrentUser(): KitsuAccount = withIOContext {
+        val payload = buildJsonObject {
+            put("query", "query { currentAccount { id ratingSystem profile { name } } }")
+        }
+        with(json) {
+            authClient.newCall(
+                POST("https://kitsu.app/api/graphql", body = payload.toString().toRequestBody(jsonMime)),
+            )
+                .awaitSuccess()
+                .parseAs<KitsuCurrentAccountResult>()
+                .data.currentAccount
+        }
+    }
+
+    suspend fun getMangaDetails(search: String): MangaTrackSearch? =
+        getMediaDetails("manga", search)?.takeUnless { it.attributes.subtype == "novel" }?.toMangaTrack()
+
+    suspend fun getAnimeDetails(search: String): AnimeTrackSearch? = getMediaDetails("anime", search)?.toAnimeTrack()
+
+    private suspend fun getMediaDetails(media: String, search: String) = withIOContext {
+        if (search.isBlank()) return@withIOContext null
+        val filter = if (search.all(Char::isDigit)) "id" else "slug"
+        val url = "$BASE_URL$media".toHttpUrl().newBuilder()
+            .addQueryParameter("filter[$filter]", search)
+            .build()
+        with(json) {
+            authClient.newCall(GET(url.toString()))
+                .awaitSuccess()
+                .parseAs<KitsuMediaResult>()
+                .data.firstOrNull()
         }
     }
 
