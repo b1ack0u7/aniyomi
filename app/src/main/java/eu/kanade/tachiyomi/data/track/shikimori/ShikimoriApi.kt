@@ -22,6 +22,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
@@ -122,11 +123,16 @@ class ShikimoriApi(
     }
 
     suspend fun search(search: String): List<MangaTrackSearch> {
+        val searchId = if (search.startsWith("id:")) {
+            search.substringAfter("id:").trim().toIntOrNull()?.takeIf { it > 0 } ?: return emptyList()
+        } else {
+            null
+        }
         return withIOContext {
-            val url = "$API_URL/mangas".toUri().buildUpon()
-                .appendQueryParameter("order", "popularity")
-                .appendQueryParameter("search", search)
-                .appendQueryParameter("limit", "20")
+            val url = "$API_URL/mangas".toHttpUrl().newBuilder()
+                .addQueryParameter("order", "popularity")
+                .addQueryParameter(if (searchId == null) "search" else "ids", searchId?.toString() ?: search)
+                .addQueryParameter("limit", "20")
                 .build()
             with(json) {
                 authClient.newCall(GET(url.toString()))
@@ -138,11 +144,16 @@ class ShikimoriApi(
     }
 
     suspend fun searchAnime(search: String): List<AnimeTrackSearch> {
+        val searchId = if (search.startsWith("id:")) {
+            search.substringAfter("id:").trim().toIntOrNull()?.takeIf { it > 0 } ?: return emptyList()
+        } else {
+            null
+        }
         return withIOContext {
-            val url = "$API_URL/animes".toUri().buildUpon()
-                .appendQueryParameter("order", "popularity")
-                .appendQueryParameter("search", search)
-                .appendQueryParameter("limit", "20")
+            val url = "$API_URL/animes".toHttpUrl().newBuilder()
+                .addQueryParameter("order", "popularity")
+                .addQueryParameter(if (searchId == null) "search" else "ids", searchId?.toString() ?: search)
+                .addQueryParameter("limit", "20")
                 .build()
             with(json) {
                 authClient.newCall(GET(url.toString()))
@@ -217,12 +228,11 @@ class ShikimoriApi(
         }
     }
 
-    suspend fun getCurrentUser(): Int {
+    suspend fun getCurrentUser(): SMUser {
         return with(json) {
             authClient.newCall(GET("$API_URL/users/whoami"))
                 .awaitSuccess()
                 .parseAs<SMUser>()
-                .id
         }
     }
 

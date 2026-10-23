@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.data.database.models.manga.MangaTrack
 import eu.kanade.tachiyomi.data.track.mangaupdates.MangaUpdates.Companion.READING_LIST
 import eu.kanade.tachiyomi.data.track.mangaupdates.MangaUpdates.Companion.WISH_LIST
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUContext
+import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUCurrentUser
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUListItem
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MULoginResponse
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MURating
@@ -11,6 +12,7 @@ import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MURecord
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUSearchResult
 import eu.kanade.tachiyomi.network.DELETE
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.PUT
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -147,6 +149,23 @@ class MangaUpdatesApi(
     }
 
     suspend fun search(query: String): List<MURecord> {
+        if (query.startsWith("id:")) {
+            val value = query.substringAfter("id:").trim()
+            val id = (value.toLongOrNull() ?: value.toLongOrNull(36))?.takeIf { it > 0 }
+                ?: return emptyList()
+            return with(json) {
+                try {
+                    listOf(
+                        client.newCall(GET("$BASE_URL/v1/series/$id"))
+                            .awaitSuccess()
+                            .parseAs<MURecord>(),
+                    )
+                } catch (e: HttpException) {
+                    if (e.code == 404) emptyList() else throw e
+                }
+            }
+        }
+
         val body = buildJsonObject {
             put("search", query)
             put(
@@ -170,6 +189,12 @@ class MangaUpdatesApi(
                 .results
                 .map { it.record }
         }
+    }
+
+    suspend fun getCurrentUser(): MUCurrentUser = with(json) {
+        authClient.newCall(GET("$BASE_URL/v1/account/profile"))
+            .awaitSuccess()
+            .parseAs<MUCurrentUser>()
     }
 
     suspend fun authenticate(username: String, password: String): MUContext? {

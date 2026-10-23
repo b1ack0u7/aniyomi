@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.data.database.models.manga.MangaTrack
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMCollectionResponse
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMOAuth
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMSearchResult
+import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMSubject
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMUser
 import eu.kanade.tachiyomi.data.track.model.AnimeTrackSearch
 import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
@@ -126,7 +127,26 @@ class BangumiApi(
         }
     }
 
+    private suspend fun getSubject(id: Long): BGMSubject? = withIOContext {
+        with(json) {
+            try {
+                authClient.newCall(GET("$API_URL/v0/subjects/$id"))
+                    .awaitSuccess()
+                    .parseAs<BGMSubject>()
+            } catch (e: HttpException) {
+                if (e.code == 404) null else throw e
+            }
+        }
+    }
+
     suspend fun search(search: String): List<MangaTrackSearch> {
+        if (search.startsWith("id:")) {
+            val id = search.substringAfter("id:").trim().toLongOrNull()?.takeIf { it > 0 }
+                ?: return emptyList()
+            val subject = getSubject(id)?.takeIf { it.type == 1 }
+                ?.takeIf { it.platform == null || it.platform == "漫画" }
+            return listOfNotNull(subject?.toMangaTrackSearch(trackId))
+        }
         // This API is marked as experimental in the documentation
         // but that has been the case since 2022 with few significant
         // changes to the schema for this endpoint since
@@ -156,6 +176,12 @@ class BangumiApi(
     }
 
     suspend fun searchAnime(search: String): List<AnimeTrackSearch> {
+        if (search.startsWith("id:")) {
+            val id = search.substringAfter("id:").trim().toLongOrNull()?.takeIf { it > 0 }
+                ?: return emptyList()
+            val subject = getSubject(id)?.takeIf { it.type == 2 }
+            return listOfNotNull(subject?.toAnimeTrackSearch(trackId))
+        }
         // This API is marked as experimental in the documentation
         // but that has been the case since 2022 with few significant
         // changes to the schema for this endpoint since

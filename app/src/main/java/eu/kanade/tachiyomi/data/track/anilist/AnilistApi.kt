@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.track.anilist.dto.ALCurrentUserResult
 import eu.kanade.tachiyomi.data.track.anilist.dto.ALOAuth
 import eu.kanade.tachiyomi.data.track.anilist.dto.ALSearchResult
 import eu.kanade.tachiyomi.data.track.anilist.dto.ALUserListEntryQueryResult
+import eu.kanade.tachiyomi.data.track.anilist.dto.ALUserViewerData
 import eu.kanade.tachiyomi.data.track.model.AnimeTrackSearch
 import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import eu.kanade.tachiyomi.network.POST
@@ -229,11 +230,16 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
     }
 
     suspend fun search(search: String): List<MangaTrackSearch> {
+        val searchId = if (search.startsWith("id:")) {
+            search.substringAfter("id:").trim().toIntOrNull()?.takeIf { it > 0 } ?: return emptyList()
+        } else {
+            null
+        }
         return withIOContext {
             val query = """
-            |query Search(${'$'}query: String) {
+            |query Search(${'$'}query: String, ${'$'}id: Int) {
                 |Page (perPage: 50) {
-                    |media(search: ${'$'}query, type: MANGA, format_not_in: [NOVEL]) {
+                    |media(search: ${'$'}query, id: ${'$'}id, type: MANGA, format_not_in: [NOVEL]) {
                         |id
                         |staff {
                             |edges {
@@ -272,7 +278,11 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
             val payload = buildJsonObject {
                 put("query", query)
                 putJsonObject("variables") {
-                    put("query", search)
+                    if (searchId == null) {
+                        put("query", search)
+                    } else {
+                        put("id", searchId)
+                    }
                 }
             }
             with(json) {
@@ -291,11 +301,16 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
     }
 
     suspend fun searchAnime(search: String): List<AnimeTrackSearch> {
+        val searchId = if (search.startsWith("id:")) {
+            search.substringAfter("id:").trim().toIntOrNull()?.takeIf { it > 0 } ?: return emptyList()
+        } else {
+            null
+        }
         return withIOContext {
             val query = """
-            |query Search(${'$'}query: String) {
+            |query Search(${'$'}query: String, ${'$'}id: Int) {
                 |Page (perPage: 50) {
-                    |media(search: ${'$'}query, type: ANIME) {
+                    |media(search: ${'$'}query, id: ${'$'}id, type: ANIME) {
                         |id
                         |studios {
                             |edges {
@@ -329,7 +344,11 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
             val payload = buildJsonObject {
                 put("query", query)
                 putJsonObject("variables") {
-                    put("query", search)
+                    if (searchId == null) {
+                        put("query", search)
+                    } else {
+                        put("id", searchId)
+                    }
                 }
             }
             with(json) {
@@ -516,12 +535,13 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
         return ALOAuth(token, "Bearer", System.currentTimeMillis() + 31536000000, 31536000000)
     }
 
-    suspend fun getCurrentUser(): Pair<Int, String> {
+    suspend fun getCurrentUser(): ALUserViewerData {
         return withIOContext {
             val query = """
             |query User {
                 |Viewer {
                     |id
+                    |name
                     |mediaListOptions {
                         |scoreFormat
                     |}
@@ -541,10 +561,7 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
                 )
                     .awaitSuccess()
                     .parseAs<ALCurrentUserResult>()
-                    .let {
-                        val viewer = it.data.viewer
-                        Pair(viewer.id, viewer.mediaListOptions.scoreFormat)
-                    }
+                    .data.viewer
             }
         }
     }
