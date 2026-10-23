@@ -163,6 +163,11 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet) : BaseMPVView(c
         MPVLib.setOptionString("tls-verify", "yes")
         MPVLib.setOptionString("tls-ca-file", "${context.filesDir.path}/${PlayerActivity.MPV_DIR}/cacert.pem")
 
+        playerPreferences.bufferWaitSeconds().get().coerceIn(0, 20).takeIf { it > 0 }?.let {
+            MPVLib.setOptionString("cache-pause-wait", it.toString())
+            MPVLib.setOptionString("cache-pause-initial", "yes")
+        }
+
         // Limit demuxer cache since the defaults are too high for mobile devices
         val cacheMegs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) 64 else 32
         MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")

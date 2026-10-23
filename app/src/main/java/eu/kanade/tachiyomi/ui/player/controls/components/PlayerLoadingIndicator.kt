@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +36,8 @@ fun PlayerLoadingIndicator(
     currentVideoLabel: String?,
     stallInfo: PlayerViewModel.StallInfo?,
     panelOpacity: Int,
+    onChooseServer: () -> Unit,
+    canChooseServer: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -49,7 +52,7 @@ fun PlayerLoadingIndicator(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
     ) {
-        CircularProgressIndicator(Modifier.size(64.dp))
+        if (stallInfo?.message == null) CircularProgressIndicator(Modifier.size(64.dp))
 
         Text(
             text = currentVideoLabel?.let { stringResource(AYMR.strings.player_loading_video, it) }
@@ -61,7 +64,20 @@ fun PlayerLoadingIndicator(
             overflow = TextOverflow.Ellipsis,
         )
 
-        if (stallInfo != null) {
+        if (stallInfo?.message != null) {
+            Text(stringResource(stallInfo.message), textAlign = TextAlign.Center)
+            TextButton(onClick = onChooseServer, enabled = canChooseServer) {
+                Text(stringResource(AYMR.strings.player_choose_server))
+            }
+        } else if (stallInfo?.targetSeconds != null) {
+            Text(
+                text = stallInfo.bufferedSeconds?.let {
+                    stringResource(AYMR.strings.player_filling_buffer, it, stallInfo.targetSeconds)
+                } ?: stringResource(AYMR.strings.player_filling_buffer_unknown),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else if (stallInfo != null) {
             Text(
                 text = stringResource(AYMR.strings.player_stalled),
                 style = MaterialTheme.typography.labelMedium,

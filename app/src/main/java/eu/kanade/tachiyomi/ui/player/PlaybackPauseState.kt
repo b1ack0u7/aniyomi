@@ -4,6 +4,9 @@ internal class PlaybackPauseState {
     private var requestedPaused = false
     private var restorePending = true
 
+    val requestedPause: Boolean
+        @Synchronized get() = requestedPaused
+
     @Synchronized
     fun request(paused: Boolean) {
         requestedPaused = paused

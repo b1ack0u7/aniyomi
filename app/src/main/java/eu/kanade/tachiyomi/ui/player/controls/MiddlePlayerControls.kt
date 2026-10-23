@@ -54,6 +54,7 @@ fun MiddlePlayerControls(
     showLoadingCircle: Boolean,
     currentVideoLabel: String?,
     stallInfo: PlayerViewModel.StallInfo?,
+    onChooseServer: () -> Unit,
     panelOpacity: Int,
     paused: Boolean,
     gestureSeekAmount: Pair<Int, Int>?,
@@ -106,10 +107,13 @@ fun MiddlePlayerControls(
                 )
             }
 
-            (isLoading || isLoadingEpisode) && showLoadingCircle -> PlayerLoadingIndicator(
+            ((isLoading || isLoadingEpisode || stallInfo != null) && showLoadingCircle) ||
+                stallInfo?.message != null -> PlayerLoadingIndicator(
                 currentVideoLabel = currentVideoLabel,
                 stallInfo = stallInfo,
                 panelOpacity = panelOpacity,
+                onChooseServer = onChooseServer,
+                canChooseServer = !areControlsLocked,
             )
             else -> {
                 AnimatedVisibility(

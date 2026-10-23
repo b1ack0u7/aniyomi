@@ -28,6 +28,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.Immutable
@@ -104,8 +105,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
@@ -1280,6 +1283,7 @@ class PlayerViewModel @JvmOverloads constructor(
                 val source = sourceManager.getOrStub(anime.source)
 
                 _currentEpisode.update { _ -> episode }
+                beginRecoveryEpisode(anime.id, episode.id!!)
                 _currentSource.update { _ -> source }
                 episodeToDownload = cancelQueuedDownloads(episode)
 
@@ -1363,7 +1367,12 @@ class PlayerViewModel @JvmOverloads constructor(
 
     private var getHosterVideoLinksJob: Job? = null
 
+    @Volatile private var hosterRequest = 0L
+
+    @Volatile private var manualSelection = 0L
+
     fun cancelHosterVideoLinksJob() {
+        hosterRequest += 1
         getHosterVideoLinksJob?.cancel()
     }
 
@@ -1371,7 +1380,22 @@ class PlayerViewModel @JvmOverloads constructor(
      * Set the video list for hosters.
      */
     fun loadHosters(source: AnimeSource, hosterList: List<Hoster>, hosterIndex: Int, videoIndex: Int) {
+        val request = ++hosterRequest
+        val selection = manualSelection
         val hasFoundPreferredVideo = AtomicBoolean(false)
+        val firstSelection = AtomicBoolean(true)
+        suspend fun loadInitial(video: Video, hoster: Int, index: Int): Boolean {
+            if (request != hosterRequest || selection != manualSelection) return false
+            return loadVideo(
+                source,
+                video,
+                hoster,
+                index,
+                automatic = !firstSelection.compareAndSet(true, false),
+                selectionEpoch = selection,
+                request = request,
+            )
+        }
 
         _hosterList.update { _ -> hosterList }
         _hosterExpandedList.update { _ ->
@@ -1379,7 +1403,7 @@ class PlayerViewModel @JvmOverloads constructor(
         }
 
         getHosterVideoLinksJob?.cancel()
-        getHosterVideoLinksJob = viewModelScope.launchIO {
+        getHosterVideoLinksJob = viewModelScope.launch {
             _hosterState.update { _ ->
                 hosterList.map { hoster ->
                     if (hoster.lazy) {
@@ -1401,7 +1425,8 @@ class PlayerViewModel @JvmOverloads constructor(
                 coroutineScope {
                     hosterList.mapIndexed { hosterIdx, hoster ->
                         async {
-                            val hosterState = EpisodeLoader.loadHosterVideos(source, hoster)
+                            val hosterState = withIOContext { EpisodeLoader.loadHosterVideos(source, hoster) }
+                            if (request != hosterRequest) return@async
 
                             _hosterState.updateAt(hosterIdx, hosterState)
 
@@ -1409,7 +1434,7 @@ class PlayerViewModel @JvmOverloads constructor(
                                 if (hosterIdx == hosterIndex) {
                                     hosterState.videoList.getOrNull(videoIndex)?.let {
                                         hasFoundPreferredVideo.set(true)
-                                        val success = loadVideo(source, it, hosterIndex, videoIndex)
+                                        val success = loadInitial(it, hosterIndex, videoIndex)
                                         if (!success) {
                                             hasFoundPreferredVideo.set(false)
                                         }
@@ -1421,8 +1446,7 @@ class PlayerViewModel @JvmOverloads constructor(
                                     if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                                         if (selectedHosterVideoIndex.value == Pair(-1, -1)) {
                                             val success =
-                                                loadVideo(
-                                                    source,
+                                                loadInitial(
                                                     hosterState.videoList[prefIndex],
                                                     hosterIdx,
                                                     prefIndex,
@@ -1437,94 +1461,122 @@ class PlayerViewModel @JvmOverloads constructor(
                         }
                     }.awaitAll()
 
+                    if (request != hosterRequest || selection != manualSelection) return@coroutineScope
                     if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                         val (hosterIdx, videoIdx) = HosterLoader.selectBestVideo(hosterState.value)
                         if (hosterIdx == -1) {
-                            throw ExceptionWithStringResource("No available videos", AYMR.strings.no_available_videos)
+                            withUIContext { stopAutomaticRecovery(AYMR.strings.player_stalled_no_alternative) }
+                            return@coroutineScope
                         }
 
                         val video = (hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
 
-                        loadVideo(source, video, hosterIdx, videoIdx)
+                        loadInitial(video, hosterIdx, videoIdx)
                     }
                 }
             } catch (e: CancellationException) {
-                _hosterState.update { _ ->
-                    hosterList.map { HosterState.Idle(it.hosterName) }
+                if (request == hosterRequest) {
+                    _hosterState.update { _ -> hosterList.map { HosterState.Idle(it.hosterName) } }
                 }
-
                 throw e
             }
         }
     }
 
-    private suspend fun loadVideo(source: AnimeSource?, video: Video, hosterIndex: Int, videoIndex: Int): Boolean {
-        val selectedHosterState = (_hosterState.value[hosterIndex] as? HosterState.Ready) ?: return false
-        updateIsLoadingEpisode(true)
+    private suspend fun loadVideo(
+        source: AnimeSource?,
+        video: Video,
+        hosterIndex: Int,
+        videoIndex: Int,
+        automatic: Boolean = true,
+        reason: PlaybackFailureReason = PlaybackFailureReason.Resolution,
+        expectedAttempt: Long = activeAttempt,
+        reservedAutomatic: Boolean = false,
+        selectionEpoch: Long? = null,
+        request: Long? = null,
+    ): Boolean {
+        val load = withUIContext {
+            if (selectionEpoch != null && selectionEpoch != manualSelection) return@withUIContext null
+            if (request != null && request != hosterRequest) return@withUIContext null
+            if (reservedAutomatic && expectedAttempt != activeAttempt) return@withUIContext null
+            val selected = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready
+                ?: return@withUIContext null
+            if (videoIndex !in selected.videoList.indices) return@withUIContext null
+            if (automatic && !reserveRecovery(expectedAttempt, reason, true)) return@withUIContext null
+            val ready = selected.videoState[videoIndex] == Video.State.READY
+            activeAttempt = recoveryPolicy.beginAttempt()
+            recoveryStopped = false
+            _stallInfo.value = null
+            cancelStallWatchdog()
+            updateIsLoadingEpisode(true)
+            _selectedHosterVideoIndex.value = hosterIndex to videoIndex
+            _hosterState.updateAt(hosterIndex, selected.getChangedAt(videoIndex, video, Video.State.LOAD_VIDEO))
+            playbackPauseState.beginLoad()
+            applyPausedState(true)
+            Triple(activeAttempt, ready, manualSelection)
+        } ?: return false
+        val attempt = load.first
 
-        val oldSelectedIndex = _selectedHosterVideoIndex.value
-        _selectedHosterVideoIndex.update { _ -> Pair(hosterIndex, videoIndex) }
-
-        _hosterState.updateAt(
-            hosterIndex,
-            selectedHosterState.getChangedAt(videoIndex, video, Video.State.LOAD_VIDEO),
-        )
-
-        // Pause until everything has loaded
-        playbackPauseState.beginLoad()
-        applyPausedState(true)
-
-        val resolvedVideo = if (selectedHosterState.videoState[videoIndex] != Video.State.READY) {
-            HosterLoader.getResolvedVideo(source, video)
-        } else {
-            video
-        }
-
-        if (resolvedVideo == null || resolvedVideo.videoUrl.isEmpty()) {
-            if (currentVideo.value == null) {
-                _hosterState.updateAt(
-                    hosterIndex,
-                    selectedHosterState.getChangedAt(videoIndex, video, Video.State.ERROR),
+        val resolved = withIOContext {
+            if (!load.second) {
+                val timeout = playbackStallTimeoutMs(
+                    playerPreferences.autoSwitchOnStall().get(),
+                    playerPreferences.stallTimeoutSeconds().get(),
                 )
-
-                val (newHosterIdx, newVideoIdx) = HosterLoader.selectBestVideo(hosterState.value)
-                if (newHosterIdx == -1) {
-                    if (_hosterState.value.any { it is HosterState.Loading }) {
-                        _selectedHosterVideoIndex.update { _ -> Pair(-1, -1) }
-                        return false
-                    } else {
-                        throw ExceptionWithStringResource("No available videos", AYMR.strings.no_available_videos)
+                if (timeout != null) {
+                    withTimeoutOrNull(timeout) {
+                        HosterLoader.getResolvedVideo(source, video)
                     }
+                } else {
+                    HosterLoader.getResolvedVideo(source, video)
                 }
-
-                val newVideo = (hosterState.value[newHosterIdx] as HosterState.Ready).videoList[newVideoIdx]
-
-                return loadVideo(source, newVideo, newHosterIdx, newVideoIdx)
             } else {
-                _selectedHosterVideoIndex.update { _ -> oldSelectedIndex }
-                _hosterState.updateAt(
-                    hosterIndex,
-                    selectedHosterState.getChangedAt(videoIndex, video, Video.State.ERROR),
-                )
-                return false
+                video
             }
         }
+        if (attempt != activeAttempt || load.third != manualSelection) return false
+        if (request != null && request != hosterRequest) return false
 
-        _hosterState.updateAt(
-            hosterIndex,
-            selectedHosterState.getChangedAt(videoIndex, resolvedVideo, Video.State.READY),
-        )
-
-        _currentVideo.update { _ -> resolvedVideo }
-
-        qualityIndex = Pair(hosterIndex, videoIndex)
-
-        viewModelScope.launchIO {
-            loadThumbnails(resolvedVideo, source)
+        if (resolved == null || resolved.videoUrl.isEmpty()) {
+            val next = withUIContext {
+                if (attempt != activeAttempt) return@withUIContext null
+                val current = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready
+                    ?: return@withUIContext null
+                _hosterState.updateAt(hosterIndex, current.getChangedAt(videoIndex, video, Video.State.ERROR))
+                HosterLoader.selectBestVideo(_hosterState.value)
+            } ?: return false
+            if (next.first == -1) {
+                if (_hosterState.value.any { it is HosterState.Loading }) {
+                    _selectedHosterVideoIndex.value = -1 to -1
+                    return false
+                }
+                withUIContext { reserveRecovery(attempt, PlaybackFailureReason.Resolution, false) }
+                return false
+            }
+            val nextVideo = (_hosterState.value[next.first] as HosterState.Ready).videoList[next.second]
+            return loadVideo(
+                source,
+                nextVideo,
+                next.first,
+                next.second,
+                expectedAttempt = attempt,
+                selectionEpoch = load.third,
+                request = request,
+            )
         }
 
-        activity.setVideo(resolvedVideo)
-        return true
+        return withUIContext {
+            if (attempt != activeAttempt || load.third != manualSelection) return@withUIContext false
+            if (request != null && request != hosterRequest) return@withUIContext false
+            val current = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready
+                ?: return@withUIContext false
+            _hosterState.updateAt(hosterIndex, current.getChangedAt(videoIndex, resolved, Video.State.READY))
+            _currentVideo.value = resolved
+            qualityIndex = hosterIndex to videoIndex
+            viewModelScope.launchIO { loadThumbnails(resolved, source) }
+            activity.setVideo(resolved)
+            true
+        }
     }
 
     /**
@@ -1537,6 +1589,9 @@ class PlayerViewModel @JvmOverloads constructor(
     data class StallInfo(
         val secondsUntilSwitch: Int,
         val nextVideoLabel: String?,
+        val bufferedSeconds: Int? = null,
+        val targetSeconds: Int? = null,
+        val message: StringResource? = null,
     )
 
     private val _stallInfo = MutableStateFlow<StallInfo?>(null)
@@ -1581,150 +1636,197 @@ class PlayerViewModel @JvmOverloads constructor(
         return if (nextHosterIdx == -1) null else nextHosterIdx to nextVideoIdx
     }
 
-    /**
-     * Starts counting down to an automatic server switch.
-     *
-     * Called when playback is waiting on data — either mpv still opening the stream, or the cache
-     * running dry mid-playback. [cancelStallWatchdog] undoes it as soon as anything progresses, so
-     * a slow-but-working server never triggers a switch.
-     */
-    fun startStallWatchdog() {
-        if (!playerPreferences.autoSwitchOnStall().get()) return
-        val timeoutSeconds = playerPreferences.stallTimeoutSeconds().get()
-        if (timeoutSeconds <= 0) return
-        if (stallWatchdogJob?.isActive == true) return
+    private val recoveryPolicy = PlaybackRecoveryPolicy()
 
-        stallWatchdogJob = viewModelScope.launchIO {
-            val next = peekNextVideo()
-            val nextLabel = next?.let { (hosterIdx, videoIdx) ->
-                val video = (_hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
-                videoLabel(hosterIdx, video)
-            }
+    @Volatile private var activeAttempt = 0L
+    private var recoveryStopped = false
+    private val waitState = PlaybackWaitState()
+    private var fileLoaded = false
+    private var readingCurrentFile = false
 
-            // A healthy server still takes a few seconds to open a stream, so stay quiet at first:
-            // announcing a switch during every normal load would cry wolf.
-            val graceSeconds = (timeoutSeconds / 2).coerceAtMost(STALL_UI_GRACE_SECONDS)
-
-            for (remaining in timeoutSeconds downTo 1) {
-                // Standing down here is what keeps a deliberate pause from being read as a stall:
-                // a paused player is not waiting on data, so it never reaches the switch.
-                if (!isWaitingOnData()) {
-                    _stallInfo.update { _ -> null }
-                    return@launchIO
-                }
-                if (timeoutSeconds - remaining >= graceSeconds) {
-                    _stallInfo.update { _ -> StallInfo(remaining, nextLabel) }
-                }
-                delay(1.seconds)
-            }
-
-            // Detach before handing over: the switch runs setVideo, which cancels the watchdog,
-            // and we must not cancel the coroutine we are still running in.
-            stallWatchdogJob = null
-            _stallInfo.update { _ -> StallInfo(0, nextLabel) }
-
-            if (nextLabel == null) {
-                return@launchIO
-            }
-
-            onVideoPlaybackFailed()
+    private fun beginRecoveryEpisode(animeId: Long, episodeId: Long) {
+        if (recoveryPolicy.beginEpisode(animeId, episodeId)) {
+            activeAttempt = 0L
+            manualSelection += 1
+            recoveryStopped = false
+            _stallInfo.value = null
         }
     }
 
-    /**
-     * Called when a buffering episode ends, with the total time this video has spent stalled.
-     *
-     * A server can be useless without ever hanging outright: one measured run stalled nine times
-     * in 76 seconds — none of them longer than the timeout, so the single-stall watchdog never
-     * fired — while playback crawled along at 40% of real time. Cumulative stalling catches the
-     * server that is merely too slow, which the continuous-stall check cannot see.
-     */
-    fun onStallRecovered(totalStalledMs: Long) {
-        if (!playerPreferences.autoSwitchOnStall().get()) return
-        val timeoutSeconds = playerPreferences.stallTimeoutSeconds().get()
-        if (timeoutSeconds <= 0) return
-        if (totalStalledMs < timeoutSeconds * 1000L) return
-
-        onVideoPlaybackFailed()
+    private fun reserveRecovery(attempt: Long, reason: PlaybackFailureReason, hasCandidate: Boolean): Boolean {
+        return when (
+            recoveryPolicy.reserve(
+                attempt,
+                reason,
+                playerPreferences.maxAutomaticSwitches().get().coerceIn(0, 10),
+                hasCandidate,
+            )
+        ) {
+            RecoveryDecision.Allowed -> true
+            RecoveryDecision.Duplicate, RecoveryDecision.Stale -> false
+            RecoveryDecision.Exhausted, RecoveryDecision.NoCandidate -> {
+                stopAutomaticRecovery(
+                    if (hasCandidate) {
+                        AYMR.strings.player_switch_budget_exhausted
+                    } else {
+                        AYMR.strings.player_stalled_no_alternative
+                    },
+                )
+                false
+            }
+        }
     }
 
-    /**
-     * Whether the player is currently blocked on data — either still opening the stream or with a
-     * dry cache. This is the same condition that shows the loading overlay.
-     */
-    private fun isWaitingOnData(): Boolean = isLoading.value || _isLoadingEpisode.value
+    private fun stopAutomaticRecovery(message: StringResource) {
+        recoveryStopped = true
+        cancelStallWatchdog()
+        updateIsLoadingEpisode(false)
+        isLoading.value = false
+        _stallInfo.value = StallInfo(0, null, message = message)
+    }
 
-    /** Stops the countdown and clears the overlay message. */
+    fun preparePlaybackRequest() {
+        recoveryStopped = true
+        manualSelection += 1
+        cancelHosterVideoLinksJob()
+        playbackPauseState.reset()
+    }
+
+    fun onPlaybackFileStarting() {
+        fileLoaded = false
+        readingCurrentFile = true
+        waitState.reset(SystemClock.elapsedRealtime())
+    }
+
+    fun onPlaybackFileLoaded() {
+        fileLoaded = true
+    }
+
+    fun onPlaybackSeek() {
+        waitState.reset(SystemClock.elapsedRealtime())
+    }
+
+    fun startStallWatchdog() {
+        if (stallWatchdogJob?.isActive == true || recoveryStopped) return
+        val attempt = activeAttempt
+        fileLoaded = false
+        readingCurrentFile = false
+        waitState.reset(SystemClock.elapsedRealtime())
+        stallWatchdogJob = viewModelScope.launch {
+            while (isActive && attempt == activeAttempt && !recoveryStopped) {
+                val opening = !fileLoaded
+                val buffering = readingCurrentFile && MPVLib.getPropertyBoolean("paused-for-cache") == true
+                val seeking = readingCurrentFile && MPVLib.getPropertyBoolean("seeking") == true
+                val seconds = if (readingCurrentFile) MPVLib.getPropertyDouble("demuxer-cache-duration") else null
+                val sample = PlaybackWaitSample(
+                    opening = opening,
+                    buffering = buffering,
+                    seeking = seeking,
+                    paused = playbackPauseState.requestedPause,
+                    positionSeconds = activity.player.timePos?.toDouble(),
+                    cacheSeconds = seconds,
+                    cacheBytes = if (readingCurrentFile) {
+                        MPVLib.getPropertyInt("demuxer-cache-state/fw-bytes")?.toLong()
+                    } else {
+                        null
+                    },
+                )
+                val automaticTimeout = playbackStallTimeoutMs(
+                    playerPreferences.autoSwitchOnStall().get(),
+                    playerPreferences.stallTimeoutSeconds().get(),
+                )
+                val timeoutMs = automaticTimeout ?: 20000L
+                val decision = waitState.update(
+                    SystemClock.elapsedRealtime(),
+                    sample,
+                    timeoutMs,
+                    MPVLib.getPropertyDouble("options/cache-pause-wait") ?: 1.0,
+                )
+                val enabled = automaticTimeout != null
+                val next = if (enabled &&
+                    decision.phase != PlaybackWaitPhase.Playing &&
+                    decision.phase != PlaybackWaitPhase.Paused
+                ) {
+                    peekNextVideo()
+                } else {
+                    null
+                }
+                val remainingSwitches = recoveryPolicy.remaining(
+                    playerPreferences.maxAutomaticSwitches().get().coerceIn(0, 10),
+                )
+                val nextLabel = next?.let { (h, v) ->
+                    val video = (_hosterState.value.getOrNull(h) as? HosterState.Ready)?.videoList?.getOrNull(v)
+                    video?.let { videoLabel(h, it) }
+                }
+                _stallInfo.value = when {
+                    decision.phase == PlaybackWaitPhase.Filling -> StallInfo(
+                        0,
+                        null,
+                        bufferedSeconds = seconds?.takeIf { it.isFinite() && it >= 0 }?.toInt(),
+                        targetSeconds = (MPVLib.getPropertyDouble("options/cache-pause-wait") ?: 1.0).toInt(),
+                    )
+                    enabled && decision.continuousStallMs >= minOf(timeoutMs / 2, STALL_UI_GRACE_SECONDS * 1000L) ->
+                        if (remainingSwitches == 0) {
+                            StallInfo(0, null, message = AYMR.strings.player_switch_budget_exhausted)
+                        } else {
+                            StallInfo((decision.remainingMs / 1000).toInt() + 1, nextLabel)
+                        }
+                    else -> null
+                }
+                if (enabled && decision.failed) {
+                    stallWatchdogJob = null
+                    onVideoPlaybackFailed(
+                        if (opening) PlaybackFailureReason.Opening else PlaybackFailureReason.Stall,
+                        attempt,
+                    )
+                    return@launch
+                }
+                delay(1.seconds)
+            }
+        }
+    }
+
     fun cancelStallWatchdog() {
-        if (stallWatchdogJob == null && _stallInfo.value == null) return
         stallWatchdogJob?.cancel()
         stallWatchdogJob = null
-        _stallInfo.update { _ -> null }
+        _stallInfo.update { it?.takeIf { info -> info.message != null } }
     }
 
-    /**
-     * Called whenever mpv reports real playback progress, which proves the current server is
-     * alive and disarms the watchdog.
-     */
-    fun onPlaybackProgressed() {
+    internal fun onVideoPlaybackFailed(
+        reason: PlaybackFailureReason = PlaybackFailureReason.NoContent,
+        expectedAttempt: Long = activeAttempt,
+    ) {
+        if (expectedAttempt != activeAttempt || recoveryStopped) return
+        val next = peekNextVideo()
+        val (h, v) = _selectedHosterVideoIndex.value
+        val selected = _hosterState.value.getOrNull(h) as? HosterState.Ready ?: return
+        val failed = selected.videoList.getOrNull(v) ?: return
+        if (!reserveRecovery(expectedAttempt, reason, next != null)) return
+        _hosterState.updateAt(h, selected.getChangedAt(v, failed, Video.State.ERROR))
+        _currentVideo.value = null
+        _selectedHosterVideoIndex.value = next ?: return
         cancelStallWatchdog()
-    }
-
-    /**
-     * Called when mpv gave up on the stream we handed it without ever playing anything.
-     *
-     * Resolution-time failures are already handled inside [loadVideo], but until now a video that
-     * resolved fine and then died inside mpv left the player stuck on a dead file. Mark it as
-     * failed and move on to the next best candidate, exactly like the resolution-time fallback.
-     */
-    fun onVideoPlaybackFailed() {
-        // Detach rather than cancel: this may be running inside the watchdog coroutine itself.
-        stallWatchdogJob = null
-
-        val (hosterIndex, videoIndex) = _selectedHosterVideoIndex.value
-        if (hosterIndex == -1 || videoIndex == -1) return
-
-        val selectedHosterState = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready ?: return
-        val failedVideo = selectedHosterState.videoList.getOrNull(videoIndex) ?: return
-
-        _hosterState.updateAt(
-            hosterIndex,
-            selectedHosterState.getChangedAt(videoIndex, failedVideo, Video.State.ERROR),
-        )
-        // Let loadVideo's own fallback chain kick in if the replacement fails too.
-        _currentVideo.update { _ -> null }
-
-        viewModelScope.launchIO {
-            val (nextHosterIdx, nextVideoIdx) = HosterLoader.selectBestVideo(_hosterState.value)
-            if (nextHosterIdx == -1) {
-                updateIsLoadingEpisode(false)
-                activity.showToast(activity.stringResource(AYMR.strings.no_available_videos))
-                return@launchIO
-            }
-
-            val nextVideo = (_hosterState.value[nextHosterIdx] as HosterState.Ready).videoList[nextVideoIdx]
-            // Keeps the overlay meaningful when the failure came from mpv rather than the watchdog.
-            _stallInfo.update { _ -> StallInfo(0, videoLabel(nextHosterIdx, nextVideo)) }
-
-            // loadVideo throws once its own fallback chain runs dry. Letting that escape the
-            // coroutine would reach the process-wide handler and tear the player down, so failing
-            // over has to end in a message rather than in a dead activity.
-            try {
-                loadVideo(currentSource.value, nextVideo, nextHosterIdx, nextVideoIdx)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                updateIsLoadingEpisode(false)
-                val message = (e as? ExceptionWithStringResource)
-                    ?.let { activity.stringResource(it.stringResource) }
-                    ?: activity.stringResource(AYMR.strings.no_available_videos)
-                activity.showToast(message)
-            }
+        val selection = manualSelection
+        viewModelScope.launch {
+            if (expectedAttempt != activeAttempt) return@launch
+            val (nextH, nextV) = next ?: return@launch
+            val video = (_hosterState.value.getOrNull(nextH) as? HosterState.Ready)
+                ?.videoList?.getOrNull(nextV) ?: return@launch
+            loadVideo(
+                currentSource.value,
+                video,
+                nextH,
+                nextV,
+                automatic = false,
+                expectedAttempt = expectedAttempt,
+                reservedAutomatic = true,
+                selectionEpoch = selection,
+            )
         }
     }
 
     fun onVideoClicked(hosterIndex: Int, videoIndex: Int) {
-        val hosterState = _hosterState.value[hosterIndex] as? HosterState.Ready
+        val hosterState = _hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready
         val video = hosterState?.videoList
             ?.getOrNull(videoIndex)
             ?: return // Shouldn't happen, but just in case™
@@ -1737,8 +1839,17 @@ class PlayerViewModel @JvmOverloads constructor(
             return
         }
 
-        viewModelScope.launchIO {
-            val success = loadVideo(currentSource.value, video, hosterIndex, videoIndex)
+        val selection = ++manualSelection
+        viewModelScope.launch {
+            val success = loadVideo(
+                currentSource.value,
+                video,
+                hosterIndex,
+                videoIndex,
+                automatic = false,
+                selectionEpoch = selection,
+            )
+            if (selection != manualSelection) return@launch
             if (success) {
                 if (sheetShown.value == Sheets.QualityTracks) {
                     dismissSheet()
@@ -1750,24 +1861,22 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun onHosterClicked(index: Int) {
-        when (hosterState.value[index]) {
+        val request = hosterRequest
+        when (hosterState.value.getOrNull(index)) {
             is HosterState.Ready -> {
                 _hosterExpandedList.updateAt(index, !_hosterExpandedList.value[index])
             }
             is HosterState.Idle -> {
-                val hosterName = hosterList.value[index].hosterName
-                _hosterState.updateAt(index, HosterState.Loading(hosterName))
+                val hoster = hosterList.value.getOrNull(index) ?: return
+                val source = currentSource.value ?: return
+                _hosterState.updateAt(index, HosterState.Loading(hoster.hosterName))
 
-                viewModelScope.launchIO {
-                    val hosterState = EpisodeLoader.loadHosterVideos(
-                        source = currentSource.value!!,
-                        hoster = hosterList.value[index],
-                        force = true,
-                    )
-                    _hosterState.updateAt(index, hosterState)
+                viewModelScope.launch {
+                    val hosterState = withIOContext { EpisodeLoader.loadHosterVideos(source, hoster, force = true) }
+                    if (request == hosterRequest) _hosterState.updateAt(index, hosterState)
                 }
             }
-            is HosterState.Loading, is HosterState.Error -> {}
+            is HosterState.Loading, is HosterState.Error, null -> {}
         }
     }
 
@@ -1819,6 +1928,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val chosenEpisode = currentPlaylist.value.firstOrNull { ep -> ep.id == episodeId } ?: return null
 
         _currentEpisode.update { _ -> chosenEpisode }
+        beginRecoveryEpisode(anime.id, chosenEpisode.id!!)
         episodeToDownload = cancelQueuedDownloads(chosenEpisode)
         updateEpisode(chosenEpisode)
 

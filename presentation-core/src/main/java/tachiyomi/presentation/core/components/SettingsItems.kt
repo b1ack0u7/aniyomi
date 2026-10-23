@@ -245,6 +245,7 @@ fun BaseSliderItem(
     labelStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     pillColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     enabled: Boolean = true,
+    supportingText: String? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     Column(
@@ -266,6 +267,14 @@ fun BaseSliderItem(
                 text = valueText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = pillColor,
+            )
+        }
+
+        if (!supportingText.isNullOrBlank()) {
+            Text(
+                text = supportingText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -322,7 +331,7 @@ fun SelectItem(
                     vertical = SettingsItemsPaddings.Vertical,
                 ),
             label = { Text(text = label) },
-            value = options[selectedIndex].toString(),
+            value = options.getOrNull(selectedIndex)?.toString().orEmpty(),
             onValueChange = {},
             readOnly = true,
             singleLine = true,

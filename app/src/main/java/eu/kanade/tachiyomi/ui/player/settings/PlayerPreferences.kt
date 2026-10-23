@@ -34,6 +34,8 @@ class PlayerPreferences(
     fun showEmptyHosters() = preferenceStore.getBoolean("pref_show_empty_hosters", false)
     fun autoSwitchOnStall() = preferenceStore.getBoolean("pref_auto_switch_on_stall", true)
     fun stallTimeoutSeconds() = preferenceStore.getInt("pref_stall_timeout_seconds", 20)
+    fun bufferWaitSeconds() = preferenceStore.getInt("pref_player_buffer_wait_seconds", 0)
+    fun maxAutomaticSwitches() = preferenceStore.getInt("pref_player_max_automatic_switches", 3)
 
     // Display
 

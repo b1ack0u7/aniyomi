@@ -127,10 +127,44 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
         val isAutoSwitchEnabled by autoSwitchOnStall.collectAsState()
         val stallTimeoutPref = playerPreferences.stallTimeoutSeconds()
         val stallTimeout by stallTimeoutPref.collectAsState()
+        val bufferWaitPref = playerPreferences.bufferWaitSeconds()
+        val bufferWait by bufferWaitPref.collectAsState()
+        val maxSwitchesPref = playerPreferences.maxAutomaticSwitches()
+        val maxSwitches by maxSwitchesPref.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(AYMR.strings.pref_hosters),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SliderPreference(
+                    value = bufferWait,
+                    valueRange = 0..20,
+                    title = stringResource(AYMR.strings.pref_player_buffer_wait),
+                    subtitle = if (bufferWait == 0) {
+                        stringResource(MR.strings.label_default)
+                    } else {
+                        stringResource(MR.strings.seconds_short, bufferWait)
+                    },
+                    description = if (bufferWait == 0) {
+                        stringResource(AYMR.strings.pref_player_buffer_default)
+                    } else {
+                        stringResource(AYMR.strings.pref_player_buffer_wait_summary, bufferWait)
+                    },
+                    onValueChanged = {
+                        bufferWaitPref.set(it)
+                        true
+                    },
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = maxSwitches,
+                    valueRange = 0..10,
+                    title = stringResource(AYMR.strings.pref_player_max_switches),
+                    subtitle = maxSwitches.toString(),
+                    description = stringResource(AYMR.strings.pref_player_max_switches_summary, maxSwitches),
+                    onValueChanged = {
+                        maxSwitchesPref.set(it)
+                        true
+                    },
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = showFailure,
                     title = stringResource(AYMR.strings.pref_hosters_show_failure),

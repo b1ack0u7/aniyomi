@@ -210,6 +210,7 @@ class PlayerActivity : BaseActivity() {
         player.clearPendingVideoLoad()
         viewModel.cancelStallWatchdog()
         viewModel.saveCurrentEpisodeWatchingProgress()
+        viewModel.preparePlaybackRequest()
 
         lifecycleScope.launchNonCancellable {
             viewModel.updateIsLoadingEpisode(true)
@@ -730,10 +731,7 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (property) {
             "time-pos" -> {
-                if (playbackHealth.onPosition(value)) {
-                    // Real progress: whatever server we are on is alive.
-                    viewModel.onPlaybackProgressed()
-                }
+                playbackHealth.onPosition(value)
                 sessionState.positionSeconds = value
                 updateMediaSessionState()
                 viewModel.updatePlayBackPos(value.toFloat())
@@ -785,13 +783,6 @@ class PlayerActivity : BaseActivity() {
             "paused-for-cache" -> {
                 sessionState.buffering = value
                 updateMediaSessionState()
-                playbackHealth.onBuffering(value)
-                if (value) {
-                    viewModel.startStallWatchdog()
-                } else {
-                    viewModel.cancelStallWatchdog()
-                    viewModel.onStallRecovered(playbackHealth.totalStalledMs())
-                }
                 viewModel.isLoading.update { value }
             }
 
@@ -846,11 +837,14 @@ class PlayerActivity : BaseActivity() {
     internal fun event(eventId: Int) {
         if (player.isExiting) return
         when (eventId) {
+            MPVLib.mpvEventId.MPV_EVENT_START_FILE -> viewModel.onPlaybackFileStarting()
             MPVLib.mpvEventId.MPV_EVENT_FILE_LOADED -> {
                 refreshLoadedMediaSession()
+                viewModel.onPlaybackFileLoaded()
                 viewModel.viewModelScope.launchIO { fileLoaded() }
             }
             MPVLib.mpvEventId.MPV_EVENT_SEEK -> {
+                viewModel.onPlaybackSeek()
                 sessionState.seeking = true
                 updateMediaSessionState()
                 viewModel.isLoading.update { true }

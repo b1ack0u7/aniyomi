@@ -660,7 +660,7 @@
     <string name="smart_download_milliseconds">ms</string>
     <string name="smart_download_seconds">s</string>
     <string name="smart_download_chapters">chapters</string>
-    <string name="smart_download_range">Allowed: %1$d–%2$d %3$s</string>
+    <string name="smart_download_range">Allowed: %1$d-%2$d %3$s</string>
     <string name="smart_download_value">%1$d %2$s</string>
     <string name="smart_manga_downloads_info">Uses one image request at a time per source. Successful downloads gradually restore the normal pace after rate limiting. A server may request a longer wait than your maximum. Cloudflare challenges may require opening the source in WebView. These settings reduce request bursts but cannot guarantee that a source will not block downloads.</string>
     <string name="smart_download_waiting">Waiting for source · resumes after %1$s</string>
@@ -672,4 +672,13 @@
     <string name="global_search_hidden_errors">Some sources failed. Show their errors to retry or open them in WebView.</string>
     <string name="global_search_all_sources">Search all enabled sources</string>
     <string name="global_search_show_errors">Show errors</string>
+    <string name="pref_player_buffer_wait">Buffer before playback</string>
+    <string name="pref_player_buffer_default">mpv default. Changes apply the next time the player opens.</string>
+    <string name="pref_player_buffer_wait_summary">Target %1$d seconds before starting, resuming or seeking. May resume earlier at file or cache limits. Applies when reopening the player.</string>
+    <string name="pref_player_max_switches">Automatic switches per episode</string>
+    <string name="pref_player_max_switches_summary">At most %1$d automatic alternatives across all failure reasons. Manual selection does not reset this limit.</string>
+    <string name="player_switch_budget_exhausted">Automatic switch limit reached for this episode. Choose a server to continue.</string>
+    <string name="player_choose_server">Choose server</string>
+    <string name="player_filling_buffer">Filling buffer: approximately %1$d / %2$d s</string>
+    <string name="player_filling_buffer_unknown">Filling buffer…</string>
 </resources>

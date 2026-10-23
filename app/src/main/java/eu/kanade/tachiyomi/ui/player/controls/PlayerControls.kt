@@ -335,11 +335,13 @@ fun PlayerControls(
                         onClick = { viewModel.unlockControls() },
                     )
                 }
+                val stallInfo by viewModel.stallInfo.collectAsState()
                 AnimatedVisibility(
                     visible =
                     (controlsShown && !areControlsLocked || gestureSeekAmount != null) ||
                         isLoading ||
-                        isLoadingEpisode,
+                        isLoadingEpisode ||
+                        stallInfo != null,
                     enter = fadeIn(playerControlsEnterAnimationSpec()),
                     exit = fadeOut(playerControlsExitAnimationSpec()),
                     modifier = Modifier.constrainAs(centerControls) {
@@ -351,7 +353,6 @@ fun PlayerControls(
                 ) {
                     val showLoadingCircle by playerPreferences.showLoadingCircle().collectAsState()
                     val panelOpacity by playerPreferences.panelOpacity().collectAsState()
-                    val stallInfo by viewModel.stallInfo.collectAsState()
                     val selectedVideo by viewModel.selectedHosterVideoIndex.collectAsState()
                     val hosterStates by viewModel.hosterState.collectAsState()
                     // Recomputed on every selection change so the panel names the right server.
@@ -370,6 +371,7 @@ fun PlayerControls(
                         showLoadingCircle = showLoadingCircle,
                         currentVideoLabel = currentVideoLabel,
                         stallInfo = stallInfo,
+                        onChooseServer = { viewModel.showSheet(Sheets.QualityTracks) },
                         panelOpacity = panelOpacity,
                         paused = paused,
                         gestureSeekAmount = gestureSeekAmount,
