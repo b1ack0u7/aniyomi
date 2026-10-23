@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
@@ -341,15 +343,25 @@ class Anilist(id: Long) :
         return track
     }
 
+    override suspend fun updateUserConfig() {
+        val user = api.getCurrentUser()
+        saveUserConfig {
+            scorePreference.set(user.mediaListOptions.scoreFormat)
+            saveDisplayUsername(user.name)
+        }
+    }
+
     override suspend fun login(username: String, password: String) = login(password)
 
     suspend fun login(token: String) {
         try {
             val oauth = api.createOAuth(token)
             interceptor.setAuth(oauth)
-            val (username, scoreType) = api.getCurrentUser()
-            scorePreference.set(scoreType)
-            saveCredentials(username.toString(), oauth.accessToken)
+            val user = api.getCurrentUser()
+            currentCoroutineContext().ensureActive()
+            scorePreference.set(user.mediaListOptions.scoreFormat)
+            saveCredentials(user.id.toString(), oauth.accessToken)
+            saveDisplayUsername(user.name)
         } catch (e: Throwable) {
             logout()
         }

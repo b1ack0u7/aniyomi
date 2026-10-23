@@ -13,6 +13,8 @@ import eu.kanade.tachiyomi.data.track.model.AnimeTrackSearch
 import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.i18n.MR
@@ -185,6 +187,13 @@ class Bangumi(id: Long) : BaseTracker(id, "Bangumi"), MangaTracker, AnimeTracker
 
     override fun getCompletionStatus(): Long = COMPLETED
 
+    override suspend fun updateUserConfig() {
+        val username = api.getUsername()
+        saveUserConfig {
+            saveDisplayUsername(username)
+        }
+    }
+
     override suspend fun login(username: String, password: String) = login(password)
 
     suspend fun login(code: String) {
@@ -194,8 +203,10 @@ class Bangumi(id: Long) : BaseTracker(id, "Bangumi"), MangaTracker, AnimeTracker
             // Users can set a 'username' (not nickname) once which effectively
             // replaces the stringified ID in certain queries.
             // If no username is set, the API returns the user ID as a strings
-            var username = api.getUsername()
+            val username = api.getUsername()
+            currentCoroutineContext().ensureActive()
             saveCredentials(username, oauth.accessToken)
+            saveDisplayUsername(username)
         } catch (_: Throwable) {
             logout()
         }

@@ -16,6 +16,11 @@ class TrackPreferences(
         "",
     )
 
+    fun trackDisplayUsername(tracker: Tracker) = preferenceStore.getString(
+        Preference.privateKey("pref_tracker_display_username_${tracker.id}"),
+        "",
+    )
+
     fun trackPassword(tracker: Tracker) = preferenceStore.getString(
         Preference.privateKey("pref_mangasync_password_${tracker.id}"),
         "",
@@ -35,6 +40,8 @@ class TrackPreferences(
     fun trackToken(tracker: Tracker) = preferenceStore.getString(Preference.privateKey("track_token_${tracker.id}"), "")
 
     fun anilistScoreType() = preferenceStore.getString("anilist_score_type", Anilist.POINT_10)
+
+    fun kitsuScoreType() = preferenceStore.getString("kitsu_score_type", "advanced")
 
     fun autoUpdateTrack() = preferenceStore.getBoolean("pref_auto_update_manga_sync_key", true)
 

@@ -14,6 +14,8 @@ import eu.kanade.tachiyomi.data.track.mangaupdates.dto.toTrackSearch
 import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import tachiyomi.i18n.MR
 import tachiyomi.domain.track.manga.model.MangaTrack as DomainTrack
 
@@ -112,11 +114,20 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), MangaTracker, De
         score = rating?.rating ?: 0.0
     }
 
+    override suspend fun updateUserConfig() {
+        val user = api.getCurrentUser()
+        saveUserConfig {
+            saveDisplayUsername(user.username)
+        }
+    }
+
     override suspend fun login(username: String, password: String) {
         val authenticated = api.authenticate(username, password) ?: throw Throwable(
             "Unable to login",
         )
+        currentCoroutineContext().ensureActive()
         saveCredentials(authenticated.uid.toString(), authenticated.sessionToken)
+        saveDisplayUsername(username)
         interceptor.newAuth(authenticated.sessionToken)
     }
 

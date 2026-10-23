@@ -5,6 +5,8 @@ import androidx.annotation.ColorInt
 import androidx.annotation.DrawableRes
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
 
 interface Tracker {
@@ -35,11 +37,21 @@ interface Tracker {
     @CallSuper
     fun logout()
 
+    suspend fun refreshUser()
+
+    val isRefreshingFlow: StateFlow<Boolean>
+
+    val refreshResultFlow: SharedFlow<RefreshResult>
+
     val isLoggedIn: Boolean
 
     val isLoggedInFlow: Flow<Boolean>
 
     fun getUsername(): String
+
+    fun getDisplayUsername(): String
+
+    fun saveDisplayUsername(username: String)
 
     fun getPassword(): String
 

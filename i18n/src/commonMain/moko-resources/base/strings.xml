@@ -524,6 +524,9 @@
     <string name="enhanced_services_not_installed">Available but source not installed: %s</string>
     <string name="enhanced_tracking_info">Provides enhanced features for specific sources. Entries are automatically tracked when added to your library.</string>
     <string name="track_activity_name">Tracker login</string>
+    <string name="refresh_tracker_profile">Refresh tracker profile</string>
+    <string name="refresh_tracker_success">%s profile refreshed</string>
+    <string name="refresh_tracker_error">%1$s refresh error: %2$s</string>
 
       <!-- Browse section -->
     <string name="pref_hide_in_library_items">Hide entries already in library</string>
@@ -947,6 +950,8 @@
     <string name="information_webview_required">WebView is required for the app to function</string>
     <!-- Do not translate "WebView" -->
     <string name="information_webview_outdated">Please update the WebView app for better compatibility</string>
+    <!-- Do not translate "WebView" -->
+    <string name="information_webview_crashed">WebView stopped working and the page was closed</string>
     <string name="chapter_settings_updated">Updated default chapter settings</string>
 
     <!-- Download Notification -->
@@ -983,4 +988,7 @@
     <string name="exception_http">HTTP %d, check website in WebView</string>
     <string name="exception_offline">No Internet connection</string>
     <string name="exception_unknown_host">Couldn\'t reach %s</string>
+    <string name="pref_load_ahead_only_over_wifi">Preload full chapters only on Wi-Fi</string>
+    <string name="pref_load_ahead_only_over_wifi_summary">On other networks, load only pages near the one being read</string>
+    <string name="ext_load_error">Extension could not be loaded</string>
 </resources>

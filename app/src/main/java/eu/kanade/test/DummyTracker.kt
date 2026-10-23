@@ -2,12 +2,17 @@ package eu.kanade.test
 
 import android.graphics.Color
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.track.RefreshResult
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.model.AnimeTrackSearch
 import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import okhttp3.OkHttpClient
 
@@ -43,7 +48,17 @@ data class DummyTracker(
 
     override fun logout() = Unit
 
+    override suspend fun refreshUser() = Unit
+
+    override val isRefreshingFlow = MutableStateFlow(false).asStateFlow()
+
+    override val refreshResultFlow = MutableSharedFlow<RefreshResult>().asSharedFlow()
+
     override fun getUsername(): String = "username"
+
+    override fun getDisplayUsername(): String = "username"
+
+    override fun saveDisplayUsername(username: String) = Unit
 
     override fun getPassword(): String = "passw0rd"
 

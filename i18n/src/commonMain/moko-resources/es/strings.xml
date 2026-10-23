@@ -107,6 +107,9 @@
     <string name="username">Nombre de usuario</string>
     <string name="password">Contraseña</string>
     <string name="login">Iniciar sesión</string>
+    <string name="refresh_tracker_profile">Actualizar perfil del servicio de seguimiento</string>
+    <string name="refresh_tracker_success">Perfil de %s actualizado</string>
+    <string name="refresh_tracker_error">Error al actualizar %1$s: %2$s</string>
     <string name="login_success">Conectado</string>
     <string name="unknown_error">Error desconocido</string>
     <string name="updating_category">Actualizando categoría</string>
@@ -847,4 +850,8 @@
     <string name="pref_mark_duplicate_read_chapter_read_new">Al obtener capítulos nuevos</string>
     <string name="pref_behavior">Comportamiento</string>
     <string name="pref_mark_duplicate_read_chapter_read_existing">Al terminar de leer un capítulo</string>
+    <string name="information_webview_crashed">WebView dejó de funcionar y se cerró la página</string>
+    <string name="pref_load_ahead_only_over_wifi">Precargar capítulos completos solo con Wi-Fi</string>
+    <string name="pref_load_ahead_only_over_wifi_summary">En otras redes, cargar solo las páginas cercanas a la que estás leyendo</string>
+    <string name="ext_load_error">No se pudo cargar la extensión</string>
 </resources>

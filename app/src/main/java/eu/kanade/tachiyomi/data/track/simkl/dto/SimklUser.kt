@@ -5,6 +5,12 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class SimklUser(
     val account: SimklUserAccount,
+    val user: SimklUserProfile,
+)
+
+@Serializable
+data class SimklUserProfile(
+    val name: String,
 )
 
 @Serializable

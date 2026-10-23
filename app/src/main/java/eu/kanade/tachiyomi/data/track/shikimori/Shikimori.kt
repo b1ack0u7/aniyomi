@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.data.track.model.MangaTrackSearch
 import eu.kanade.tachiyomi.data.track.shikimori.dto.SMOAuth
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.i18n.MR
@@ -218,6 +220,13 @@ class Shikimori(id: Long) :
 
     override fun getCompletionStatus(): Long = COMPLETED
 
+    override suspend fun updateUserConfig() {
+        val user = api.getCurrentUser()
+        saveUserConfig {
+            saveDisplayUsername(user.nickname)
+        }
+    }
+
     override suspend fun login(username: String, password: String) = login(password)
 
     suspend fun login(code: String) {
@@ -225,7 +234,9 @@ class Shikimori(id: Long) :
             val oauth = api.accessToken(code)
             interceptor.newAuth(oauth)
             val user = api.getCurrentUser()
-            saveCredentials(user.toString(), oauth.accessToken)
+            currentCoroutineContext().ensureActive()
+            saveCredentials(user.id.toString(), oauth.accessToken)
+            saveDisplayUsername(user.nickname)
         } catch (e: Throwable) {
             logout()
         }

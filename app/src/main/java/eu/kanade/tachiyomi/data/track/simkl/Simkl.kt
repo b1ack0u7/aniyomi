@@ -119,12 +119,18 @@ class Simkl(id: Long) : BaseTracker(id, "Simkl"), AnimeTracker {
 
     override suspend fun login(username: String, password: String) = login(password)
 
+    override suspend fun updateUserConfig() {
+        val user = api.getCurrentUser()
+        saveUserConfig { saveDisplayUsername(user.user.name) }
+    }
+
     suspend fun login(code: String) {
         try {
             val oauth = api.accessToken(code)
             interceptor.newAuth(oauth)
             val user = api.getCurrentUser()
-            saveCredentials(user.toString(), oauth.accessToken)
+            saveCredentials(user.account.id.toString(), oauth.accessToken)
+            saveDisplayUsername(user.user.name)
         } catch (e: Throwable) {
             logout()
         }

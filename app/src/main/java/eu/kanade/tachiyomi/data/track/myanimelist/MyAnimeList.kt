@@ -248,12 +248,18 @@ class MyAnimeList(id: Long) :
 
     override suspend fun login(username: String, password: String) = login(password)
 
+    override suspend fun updateUserConfig() {
+        val username = api.getCurrentUser()
+        saveUserConfig { saveDisplayUsername(username) }
+    }
+
     suspend fun login(authCode: String) {
         try {
             val oauth = api.getAccessToken(authCode)
             interceptor.setAuth(oauth)
             val username = api.getCurrentUser()
             saveCredentials(username, oauth.accessToken)
+            saveDisplayUsername(username)
         } catch (e: Throwable) {
             logout()
         }
