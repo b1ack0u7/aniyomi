@@ -24,8 +24,10 @@ import eu.kanade.tachiyomi.data.cache.MangaCoverCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.source.manga.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.library.libraryTracksFlow
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
@@ -44,7 +46,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
+import mihon.domain.library.model.search.QueryNode
+import mihon.feature.library.matches
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.compareToWithCollator
@@ -104,9 +109,17 @@ class MangaLibraryScreenModel(
     init {
         screenModelScope.launchIO {
             combine(
-                state.map { it.searchQuery }.debounce(SEARCH_DEBOUNCE_MILLIS),
+                state.map { it.searchQuery }
+                    .distinctUntilChanged()
+                    .debounce(SEARCH_DEBOUNCE_MILLIS)
+                    .map { it?.let(QueryNode::from) },
                 getLibraryFlow(),
-                getTracksPerManga.subscribe(),
+                libraryTracksFlow(
+                    categories = getCategories.subscribe(),
+                    trackingFilters = getTrackingFilterFlow(),
+                    usesTrackerSort = { it.sort.type == MangaLibrarySort.Type.TrackerMean },
+                    subscribeTracks = getTracksPerManga::subscribe,
+                ),
                 getTrackingFilterFlow(),
                 downloadCache.changes,
             ) { searchQuery, library, tracks, trackingFilter, _ ->
@@ -115,7 +128,7 @@ class MangaLibraryScreenModel(
                     .applySort(tracks, trackingFilter.keys)
                     .mapValues { (_, value) ->
                         if (searchQuery != null) {
-                            value.filter { it.matches(searchQuery) }
+                            value.filter { searchQuery.matches(it) }
                         } else {
                             value
                         }
@@ -226,12 +239,10 @@ class MangaLibraryScreenModel(
         val filterFnTracking: (MangaLibraryItem) -> Boolean = tracking@{ item ->
             if (isNotLoggedInAnyTrack || trackFiltersIsIgnored) return@tracking true
 
-            val mangaTracks = trackMap
-                .mapValues { entry -> entry.value.map { it.trackerId } }[item.libraryManga.id]
-                .orEmpty()
+            val mangaTracks = trackMap[item.libraryManga.id].orEmpty()
 
-            val isExcluded = excludedTracks.isNotEmpty() && mangaTracks.fastAny { it in excludedTracks }
-            val isIncluded = includedTracks.isEmpty() || mangaTracks.fastAny { it in includedTracks }
+            val isExcluded = excludedTracks.isNotEmpty() && mangaTracks.fastAny { it.trackerId in excludedTracks }
+            val isIncluded = includedTracks.isEmpty() || mangaTracks.fastAny { it.trackerId in includedTracks }
 
             !isExcluded && isIncluded
         }
@@ -363,27 +374,37 @@ class MangaLibraryScreenModel(
      */
     private fun getLibraryFlow(): Flow<MangaLibraryMap> {
         val libraryMangasFlow = combine(
-            getLibraryManga.subscribe(),
+            getLibraryManga.subscribe().onStart { sourceManager.isInitialized.first { it } },
             getLibraryItemPreferencesFlow(),
             downloadCache.changes,
         ) { libraryMangaList, prefs, _ ->
+            val sources = libraryMangaList
+                .mapTo(mutableSetOf()) { it.manga.source }
+                .associateWith { sourceManager.getOrStub(it) }
+            val sourceNames = sources.mapValues { (_, source) -> source.getNameForMangaInfo() }
+            val downloadCounts = mutableMapOf<Long, Long>()
             libraryMangaList
                 .map { libraryManga ->
                     // Display mode based on user preference: take it from global library setting or category
                     MangaLibraryItem(
                         libraryManga,
                         downloadCount = if (prefs.downloadBadge) {
-                            downloadManager.getDownloadCount(libraryManga.manga).toLong()
+                            downloadCounts.getOrPut(libraryManga.id) {
+                                downloadManager.getDownloadCount(libraryManga.manga).toLong()
+                            }
                         } else {
                             0
                         },
                         unreadCount = if (prefs.unreadBadge) libraryManga.unreadCount else 0,
                         isLocal = if (prefs.localBadge) libraryManga.manga.isLocal() else false,
                         sourceLanguage = if (prefs.languageBadge) {
-                            sourceManager.getOrStub(libraryManga.manga.source).lang
+                            sources.getValue(libraryManga.manga.source).lang
                         } else {
                             ""
                         },
+                        sourceManager = sourceManager,
+                        cachedSourceName = sourceNames.getValue(libraryManga.manga.source),
+                        cachedSourceLang = sources.getValue(libraryManga.manga.source).lang,
                     )
                 }
                 .groupBy { it.libraryManga.category }

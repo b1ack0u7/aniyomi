@@ -27,6 +27,8 @@ import eu.kanade.tachiyomi.data.cache.AnimeCoverCache
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadCache
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.source.anime.getNameForAnimeInfo
+import eu.kanade.tachiyomi.ui.library.libraryTracksFlow
 import eu.kanade.tachiyomi.util.episode.getNextUnseen
 import eu.kanade.tachiyomi.util.removeBackgrounds
 import eu.kanade.tachiyomi.util.removeCovers
@@ -46,7 +48,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
+import mihon.domain.library.model.search.QueryNode
+import mihon.feature.library.matches
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.compareToWithCollator
@@ -107,9 +112,17 @@ class AnimeLibraryScreenModel(
     init {
         screenModelScope.launchIO {
             combine(
-                state.map { it.searchQuery }.debounce(SEARCH_DEBOUNCE_MILLIS),
+                state.map { it.searchQuery }
+                    .distinctUntilChanged()
+                    .debounce(SEARCH_DEBOUNCE_MILLIS)
+                    .map { it?.let(QueryNode::from) },
                 getLibraryFlow(),
-                getTracksPerAnime.subscribe(),
+                libraryTracksFlow(
+                    categories = getCategories.subscribe(),
+                    trackingFilters = getTrackingFilterFlow(),
+                    usesTrackerSort = { it.sort.type == AnimeLibrarySort.Type.TrackerMean },
+                    subscribeTracks = getTracksPerAnime::subscribe,
+                ),
                 getTrackingFilterFlow(),
                 downloadCache.changes,
             ) { searchQuery, library, tracks, trackingFilter, _ ->
@@ -118,7 +131,7 @@ class AnimeLibraryScreenModel(
                     .applySort(tracks, trackingFilter.keys)
                     .mapValues { (_, value) ->
                         if (searchQuery != null) {
-                            value.filter { it.matches(searchQuery) }
+                            value.filter { searchQuery.matches(it) }
                         } else {
                             value
                         }
@@ -229,12 +242,10 @@ class AnimeLibraryScreenModel(
         val filterFnTracking: (AnimeLibraryItem) -> Boolean = tracking@{ item ->
             if (isNotLoggedInAnyTrack || trackFiltersIsIgnored) return@tracking true
 
-            val animeTracks = trackMap
-                .mapValues { entry -> entry.value.map { it.trackerId } }[item.libraryAnime.id]
-                .orEmpty()
+            val animeTracks = trackMap[item.libraryAnime.id].orEmpty()
 
-            val isExcluded = excludedTracks.isNotEmpty() && animeTracks.fastAny { it in excludedTracks }
-            val isIncluded = includedTracks.isEmpty() || animeTracks.fastAny { it in includedTracks }
+            val isExcluded = excludedTracks.isNotEmpty() && animeTracks.fastAny { it.trackerId in excludedTracks }
+            val isIncluded = includedTracks.isEmpty() || animeTracks.fastAny { it.trackerId in includedTracks }
 
             !isExcluded && isIncluded
         }
@@ -377,27 +388,37 @@ class AnimeLibraryScreenModel(
      */
     private fun getLibraryFlow(): Flow<AnimeLibraryMap> {
         val animelibAnimesFlow = combine(
-            getLibraryAnime.subscribe(),
+            getLibraryAnime.subscribe().onStart { sourceManager.isInitialized.first { it } },
             getAnimelibItemPreferencesFlow(),
             downloadCache.changes,
         ) { animelibAnimeList, prefs, _ ->
+            val sources = animelibAnimeList
+                .mapTo(mutableSetOf()) { it.anime.source }
+                .associateWith { sourceManager.getOrStub(it) }
+            val sourceNames = sources.mapValues { (_, source) -> source.getNameForAnimeInfo() }
+            val downloadCounts = mutableMapOf<Long, Long>()
             animelibAnimeList
                 .map { animelibAnime ->
                     // Display mode based on user preference: take it from global library setting or category
                     AnimeLibraryItem(
                         animelibAnime,
                         downloadCount = if (prefs.downloadBadge) {
-                            downloadManager.getDownloadCount(animelibAnime.anime).toLong()
+                            downloadCounts.getOrPut(animelibAnime.id) {
+                                downloadManager.getDownloadCount(animelibAnime.anime).toLong()
+                            }
                         } else {
                             0
                         },
                         unseenCount = if (prefs.unseenBadge) animelibAnime.unseenCount else 0,
                         isLocal = if (prefs.localBadge) animelibAnime.anime.isLocal() else false,
                         sourceLanguage = if (prefs.languageBadge) {
-                            sourceManager.getOrStub(animelibAnime.anime.source).lang
+                            sources.getValue(animelibAnime.anime.source).lang
                         } else {
                             ""
                         },
+                        sourceManager = sourceManager,
+                        cachedSourceName = sourceNames.getValue(animelibAnime.anime.source),
+                        cachedSourceLang = sources.getValue(animelibAnime.anime.source).lang,
                     )
                 }
                 .groupBy { it.libraryAnime.category }
