@@ -24,10 +24,14 @@ val Throwable.formattedMessage: String
         val causes = causeChain()
         val exception = causes.firstOrNull { it is CloudflareChallengeException }
             ?: causes.firstOrNull {
-                it is SourceRequestPausedException || it is DisabledTorrServerException ||
-                    it is HttpException || it is UnknownHostException ||
-                    it is NoChaptersException || it is NoEpisodesException ||
-                    it is SourceNotInstalledException || it is AnimeSourceNotInstalledException
+                it is SourceRequestPausedException ||
+                    it is DisabledTorrServerException ||
+                    it is HttpException ||
+                    it is UnknownHostException ||
+                    it is NoChaptersException ||
+                    it is NoEpisodesException ||
+                    it is SourceNotInstalledException ||
+                    it is AnimeSourceNotInstalledException
             }
             ?: this
         when (exception) {
