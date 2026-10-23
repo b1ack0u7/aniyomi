@@ -623,3 +623,13 @@ Informe sanitizado y evidencias de esta continuación:
 `/tmp/aniyomi-player-media-session-followup/report-followup.md` y
 `restoration-followup.json`. Respaldos y logs brutos quedan privados; estas rutas
 son temporales, no artefactos versionados.
+
+
+## Buffering y presupuesto de recuperación — 2026-10-20
+
+La siguiente tanda implementa el plan propio de
+[buffering y límites automáticos](video-player-todo.md#diseño-de-buffering-y-recuperación--2026-10-20):
+colchón opt-in, clasificación de espera y presupuesto total por episodio con
+selección manual disponible. No es un port de selección de calidad, ABR ni presets
+de Tadami. Su diseño, pruebas y límites se registran en ese TODO para mantener una
+sola fuente de verdad; esta implementación no completa las secciones 2–4 de Tadami.

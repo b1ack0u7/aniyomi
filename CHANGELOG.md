@@ -11,7 +11,29 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - `Other` - for technical stuff.
 
 ## Unreleased
+### Added
+
+- Support tracker `id:` searches for AniList, Bangumi, Kitsu and Shikimori in manga and anime, and decimal/base36 IDs for MangaUpdates in manga; adapted from Mihon snapshot [d001e6f21](https://github.com/mihonapp/mihon/commit/d001e6f21)
+- Add tracker profile refresh with loading and error feedback, separate display names, and cancellation when leaving settings or changing accounts; adapted from Mihon [01e3f8c60](https://github.com/mihonapp/mihon/commit/01e3f8c60)
+- Follow the Kitsu account's simple, regular or advanced rating system in manga and anime while preserving existing scores and backup compatibility; adapted from Mihon [a82baac3e](https://github.com/mihonapp/mihon/commit/a82baac3e) and [ec614bb4c](https://github.com/mihonapp/mihon/commit/ec614bb4c)
+
+- Support library search expressions with fields, comparisons, parentheses, negation and `&&`/`||` in manga and anime, including seen/unseen and episode-count aliases; adapted from Mihon [e7ec672c8](https://github.com/mihonapp/mihon/commit/e7ec672c8)
+- Add a Wi-Fi preference for full manga reader preloading, with bounded parallel page requests shared by source and cancellation when moving through a chapter; adapted from Mihon [3e5d593e2](https://github.com/mihonapp/mihon/commit/3e5d593e2)
+
 ### Improved
+
+- Stream manga and anime backup creation, validation and restoration, with batched queries and compatibility with existing backup formats; adapted from Mihon [771ba33a3](https://github.com/mihonapp/mihon/commit/771ba33a3)
+
+- Add missing Spanish text for reader preloading, extension load errors and WebView renderer exits
+
+- Initialize anime and manga extensions in the background, wait for their sources before using them, show copyable load errors and reload when trust or adult-content settings change; adapted from Mihon PRs [#3788](https://github.com/mihonapp/mihon/pull/3788), [#3841](https://github.com/mihonapp/mihon/pull/3841), [#3953](https://github.com/mihonapp/mihon/pull/3953) and [#3954](https://github.com/mihonapp/mihon/pull/3954)
+- Select extension updates from repositories with matching signing keys and verify the downloaded APK signature, package and offered version before installation in both stacks; adapted from Mihon [093841105](https://github.com/mihonapp/mihon/commit/093841105)
+
+- Subscribe to manga and anime library tracks only while tracker filters or score sorting need them, and reuse source lookups per library update; adapted from Mihon [940272f75](https://github.com/mihonapp/mihon/commit/940272f75) and [f027de8c2](https://github.com/mihonapp/mihon/commit/f027de8c2)
+- Read queued and downloaded chapter/episode states in batches when opening title details, and snapshot queued downloads for update lists; adapted from Mihon [fb8e640d6](https://github.com/mihonapp/mihon/commit/fb8e640d6)
+
+- Add an optional playback buffer target and coordinate progressive filling, seeks and manual pauses with the player watchdog
+- Bound automatic server alternatives with a configurable per-episode budget shared by resolution, opening, EOF and stall failures, while keeping manual selection available
 
 - Remember Pinned/All and Has results when reopening anime or manga search; opening a link limited to one extension preserves the saved source selection
 - Retry empty anime and manga searches once with normalized punctuation and spacing, preserving other sources' results and using the successful query for source navigation and pagination
@@ -19,6 +41,18 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Release search request resources and observers from previous queries, and bound simultaneous global source requests on both sides; adapted from Mihon [a4780e4ed](https://github.com/mihonapp/mihon/commit/a4780e4ed) and [2d1d2e4ca](https://github.com/mihonapp/mihon/commit/2d1d2e4cabc404461b3346b31b71c16cbca3be7b)
 
 ### Fixed
+
+- Draw static webtoon pages in bounded immutable strips, release large pages offscreen and reload safely without replacing the existing reader or its SSIV fallback; adapted from Mihon [b5856135c](https://github.com/mihonapp/mihon/commit/b5856135c)
+
+- Coordinate concurrent Cloudflare challenges by host, cancel waiting requests cleanly, and solve non-GET challenges from the site root while retrying the original request; adapted from Mihon [5a5ff22c3](https://github.com/mihonapp/mihon/commit/5a5ff22c3) and [7ae858e60](https://github.com/mihonapp/mihon/commit/7ae858e60)
+- Filter unsafe WebView headers including Origin, restrict source headers to their host in anime and manga, and recover from renderer exits in visible and Cloudflare WebViews; adapted from Mihon [5f63c983d](https://github.com/mihonapp/mihon/commit/5f63c983d), [a01867dc3](https://github.com/mihonapp/mihon/commit/a01867dc3) and [649fc83ff](https://github.com/mihonapp/mihon/commit/649fc83ff)
+- Tolerate invalid extension filters, cancel only the requested extension installation, and fail safely when system installation confirmation is unavailable in anime and manga; adapted from Mihon [c9e1b6e96](https://github.com/mihonapp/mihon/commit/c9e1b6e96), [ae749bb4f](https://github.com/mihonapp/mihon/commit/ae749bb4f), [07b9fb695](https://github.com/mihonapp/mihon/commit/07b9fb695) and [2df48e19a](https://github.com/mihonapp/mihon/commit/2df48e19a)
+- Preserve tracker start-date timestamps across time zones for anime and manga; adapted from Mihon [ee5939454](https://github.com/mihonapp/mihon/commit/ee5939454)
+- Wire the paged reader split and invert controls to their own preferences, keep the same page when adjacent chapters load, and separate preprocessed split pages by chapter; adapted from Mihon [51b61a36e](https://github.com/mihonapp/mihon/commit/51b61a36e) and [3156b4a1c](https://github.com/mihonapp/mihon/commit/3156b4a1c)
+
+- Prevent a crash when Android saves the player settings screen after the app goes into the background
+
+- Keep player buffering and recovery sliders compact by separating their descriptions from the value badge
 
 - Resume fallback playback after a stream ends without meaningful progress, preserving explicit pauses instead of inheriting mpv’s automatic EOF pause
 
@@ -38,6 +72,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Other
 
+- Update Okio, Jsoup, Conscrypt and compatible AndroidX libraries, plus MockK and Spotless
 - Log source IDs and error types for failed video resolution without exposing exception messages, video URLs or credentials
 - Add regression coverage for search cancellation, concurrent results, normalized retries, filters, pagination, empty states, and source suggestion caching
 
