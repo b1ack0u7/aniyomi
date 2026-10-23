@@ -8,6 +8,7 @@ import android.widget.Toast
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import eu.kanade.tachiyomi.util.system.toWebViewHeaders
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.DelicateCoroutinesApi
 import okhttp3.Headers
@@ -16,7 +17,6 @@ import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.i18n.MR
-import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -49,7 +49,6 @@ abstract class WebViewInterceptor(
 
     abstract fun intercept(chain: Interceptor.Chain, request: Request, response: Response): Response
 
-    @OptIn(DelicateCoroutinesApi::class)
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val response = chain.proceed(request)
@@ -57,26 +56,24 @@ abstract class WebViewInterceptor(
             return response
         }
 
-        if (!WebViewUtil.supportsWebView(context)) {
-            launchUI {
-                context.toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
-            }
-            return response
-        }
-        initWebView
+        if (!prepareWebView()) return response
 
         return intercept(chain, request, response)
     }
 
-    fun parseHeaders(headers: Headers): Map<String, String> {
-        return headers
-            // Keeping unsafe header makes webview throw [net::ERR_INVALID_ARGUMENT]
-            .filter { (name, value) ->
-                isRequestHeaderSafe(name, value)
+    @OptIn(DelicateCoroutinesApi::class)
+    protected fun prepareWebView(): Boolean {
+        if (!WebViewUtil.supportsWebView(context)) {
+            launchUI {
+                context.toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
             }
-            .groupBy(keySelector = { (name, _) -> name }) { (_, value) -> value }
-            .mapValues { it.value.getOrNull(0).orEmpty() }
+            return false
+        }
+        initWebView
+        return true
     }
+
+    fun parseHeaders(headers: Headers): Map<String, String> = headers.toWebViewHeaders()
 
     fun CountDownLatch.awaitFor30Seconds() {
         await(30, TimeUnit.SECONDS)
@@ -90,24 +87,3 @@ abstract class WebViewInterceptor(
         }
     }
 }
-
-// Based on [IsRequestHeaderSafe] in https://source.chromium.org/chromium/chromium/src/+/main:services/network/public/cpp/header_util.cc
-private fun isRequestHeaderSafe(_name: String, _value: String): Boolean {
-    val name = _name.lowercase(Locale.ENGLISH)
-    val value = _value.lowercase(Locale.ENGLISH)
-    if (name in unsafeHeaderNames || name.startsWith("proxy-")) return false
-    if (name == "connection" && value == "upgrade") return false
-    return true
-}
-private val unsafeHeaderNames =
-    listOf(
-        "content-length",
-        "host",
-        "trailer",
-        "te",
-        "upgrade",
-        "cookie2",
-        "keep-alive",
-        "transfer-encoding",
-        "set-cookie",
-    )
