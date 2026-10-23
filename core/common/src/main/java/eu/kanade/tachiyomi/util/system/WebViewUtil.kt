@@ -8,7 +8,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import kotlinx.coroutines.suspendCancellableCoroutine
 import logcat.LogPriority
+import okhttp3.Headers
 import tachiyomi.core.common.util.system.logcat
+import java.util.Locale
 import kotlin.coroutines.resume
 
 object WebViewUtil {
@@ -114,3 +116,20 @@ private fun WebView.getDefaultUserAgentString(): String {
 
     return defaultUserAgentString
 }
+
+fun Headers.toWebViewHeaders(): Map<String, String> {
+    val safeHeaders = linkedMapOf<String, String>()
+    for ((name, value) in this) {
+        val normalizedName = name.lowercase(Locale.ENGLISH)
+        if (normalizedName in unsafeHeaderNames || normalizedName.startsWith("proxy-")) continue
+        if (normalizedName == "connection" && value.equals("upgrade", ignoreCase = true)) continue
+        if (safeHeaders.keys.none { it.equals(name, ignoreCase = true) }) safeHeaders[name] = value
+    }
+    return safeHeaders
+}
+
+// Chromium rejects these headers; a mismatched Origin can also kill the renderer.
+private val unsafeHeaderNames = setOf(
+    "content-length", "host", "trailer", "te", "upgrade", "cookie2", "keep-alive", "transfer-encoding", "set-cookie",
+    "origin",
+)

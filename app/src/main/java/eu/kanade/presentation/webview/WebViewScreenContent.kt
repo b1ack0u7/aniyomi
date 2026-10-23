@@ -2,9 +2,11 @@ package eu.kanade.presentation.webview
 
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,9 +45,13 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.getHtml
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import logcat.LogPriority
 import okhttp3.Request
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -61,18 +67,27 @@ fun WebViewScreenContent(
     onOpenInBrowser: (String) -> Unit,
     onClearCookies: (String) -> Unit,
     headers: Map<String, String> = emptyMap(),
+    headersHost: String? = null,
     onUrlChange: (String) -> Unit = {},
 ) {
-    val state = rememberWebViewState(url = url, additionalHttpHeaders = headers)
+    val sourceHeaders = remember(headersHost, headers) { WebViewSourceHeaders(headersHost, headers) }
+    val state = rememberWebViewState(url = url)
     val navigator = rememberWebViewNavigator()
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val network = remember { Injekt.get<NetworkHelper>() }
     val spoofedPackageName = remember { WebViewUtil.spoofedPackageName(context) }
+    val webViewClient = remember(network, sourceHeaders) {
+        network.nonCloudflareClient.newBuilder()
+            .addNetworkInterceptor { chain -> chain.proceed(sourceHeaders.filterRequest(chain.request())) }
+            .build()
+    }
 
     var currentUrl by remember { mutableStateOf(url) }
     var showCloudflareHelp by remember { mutableStateOf(false) }
+    var rendererGone by remember { mutableStateOf(false) }
+    var htmlJob by remember { mutableStateOf<Job?>(null) }
 
     val webClient = remember {
         object : AccompanistWebViewClient() {
@@ -86,7 +101,9 @@ fun WebViewScreenContent(
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                scope.launch {
+                if (rendererGone) return
+                htmlJob?.cancel()
+                htmlJob = scope.launch {
                     val html = view.getHtml()
                     showCloudflareHelp = "window._cf_chl_opt" in html || "Ray ID is" in html
                 }
@@ -108,21 +125,19 @@ fun WebViewScreenContent(
                 view: WebView?,
                 request: WebResourceRequest?,
             ): Boolean {
-                request?.let {
-                    // Don't attempt to open blobs as webpages
-                    if (it.url.toString().startsWith("blob:http")) {
-                        return false
-                    }
+                return request?.url?.scheme == "intent"
+            }
 
-                    // Ignore intents urls
-                    if (it.url.toString().startsWith("intent://")) {
-                        return true
-                    }
-
-                    // Continue with request, but with custom headers
-                    view?.loadUrl(it.url.toString(), headers)
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                logcat(LogPriority.ERROR) {
+                    "WebView renderer gone: crashed=${detail.didCrash()}, " +
+                        "priority=${detail.rendererPriorityAtExit()}"
                 }
-                return super.shouldOverrideUrlLoading(view, request)
+                rendererGone = true
+                htmlJob?.cancel()
+                view.context.toast(MR.strings.information_webview_crashed, Toast.LENGTH_LONG)
+                onNavigateUp()
+                return true
             }
 
             override fun shouldInterceptRequest(
@@ -132,16 +147,22 @@ fun WebViewScreenContent(
                 return try {
                     val internalRequest = Request.Builder().apply {
                         url(request!!.url.toString())
-                        request.requestHeaders.forEach { (key, value) ->
-                            if (key == "X-Requested-With" && value in setOf(context.packageName, spoofedPackageName)) {
-                                return@forEach
+                        sourceHeaders.filterRequestHeaders(request.url.toString(), request.requestHeaders)
+                            .forEach { (key, value) ->
+                                if (key == "X-Requested-With" &&
+                                    value in setOf(context.packageName, spoofedPackageName)
+                                ) {
+                                    return@forEach
+                                }
+                                addHeader(key, value)
                             }
-                            addHeader(key, value)
+                        if (request.isForMainFrame) {
+                            sourceHeaders.forUrl(request.url.toString()).forEach { (key, value) -> header(key, value) }
                         }
                         method(request.method, null)
                     }.build()
 
-                    val response = network.nonCloudflareClient.newCall(internalRequest).execute()
+                    val response = webViewClient.newCall(internalRequest).execute()
 
                     val contentType = response.body.contentType()?.let { "${it.type}/${it.subtype}" } ?: "text/html"
                     val contentEncoding = response.body.contentType()?.charset()?.name() ?: "utf-8"
@@ -248,27 +269,34 @@ fun WebViewScreenContent(
             }
         },
     ) { contentPadding ->
-        WebView(
-            state = state,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding),
-            navigator = navigator,
-            onCreated = { webView ->
-                webView.setDefaultSettings()
+        if (!rendererGone) {
+            WebView(
+                state = state,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding),
+                navigator = navigator,
+                onCreated = { webView ->
+                    webView.setDefaultSettings()
 
-                // Debug mode (chrome://inspect/#devices)
-                if (BuildConfig.DEBUG &&
-                    0 != webView.context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE
-                ) {
-                    WebView.setWebContentsDebuggingEnabled(true)
-                }
+                    // Debug mode (chrome://inspect/#devices)
+                    if (BuildConfig.DEBUG &&
+                        0 != webView.context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE
+                    ) {
+                        WebView.setWebContentsDebuggingEnabled(true)
+                    }
 
-                headers["user-agent"]?.let {
-                    webView.settings.userAgentString = it
-                }
-            },
-            client = webClient,
-        )
+                    sourceHeaders.forUrl(url).entries.firstOrNull { it.key.equals("user-agent", true) }?.value?.let {
+                        webView.settings.userAgentString = it
+                    }
+                },
+                onDispose = { webView ->
+                    htmlJob?.cancel()
+                    if (!rendererGone) webView.stopLoading()
+                    webView.destroy()
+                },
+                client = webClient,
+            )
+        }
     }
 }

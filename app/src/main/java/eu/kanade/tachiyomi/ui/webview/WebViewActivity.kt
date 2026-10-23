@@ -17,10 +17,12 @@ import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
+import eu.kanade.tachiyomi.util.system.toWebViewHeaders
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import logcat.LogPriority
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
 import tachiyomi.domain.source.manga.service.MangaSourceManager
@@ -60,20 +62,24 @@ class WebViewActivity : BaseActivity() {
 
         val url = intent.extras?.getString(URL_KEY) ?: return
         assistUrl = url
+        val sourceId = intent.extras?.getLong(SOURCE_KEY)
+        val isAnime = intent.getBooleanExtra(ANIME_KEY, false)
         var headers = emptyMap<String, String>()
-        (sourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? HttpSource)?.let { source ->
-            try {
-                headers = source.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to build headers" }
+        var headersHost: String? = null
+        try {
+            if (isAnime) {
+                (sourceId?.let(animeSourceManager::get) as? AnimeHttpSource)?.let { source ->
+                    headers = source.headers.toWebViewHeaders()
+                    headersHost = source.baseUrl.toHttpUrlOrNull()?.host
+                }
+            } else {
+                (sourceId?.let(sourceManager::get) as? HttpSource)?.let { source ->
+                    headers = source.headers.toWebViewHeaders()
+                    headersHost = source.baseUrl.toHttpUrlOrNull()?.host
+                }
             }
-        }
-        (animeSourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? AnimeHttpSource)?.let { animeSource ->
-            try {
-                headers = animeSource.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to build headers" }
-            }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Failed to build headers" }
         }
 
         setComposeContent {
@@ -82,6 +88,7 @@ class WebViewActivity : BaseActivity() {
                 initialTitle = intent.extras?.getString(TITLE_KEY),
                 url = url,
                 headers = headers,
+                headersHost = headersHost,
                 onUrlChange = { assistUrl = it },
                 onShare = this::shareWebpage,
                 onOpenInBrowser = this::openInBrowser,

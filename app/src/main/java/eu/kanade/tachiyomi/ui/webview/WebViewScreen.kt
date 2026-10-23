@@ -13,6 +13,7 @@ class WebViewScreen(
     private val url: String,
     private val initialTitle: String? = null,
     private val sourceId: Long? = null,
+    private val isAnime: Boolean = false,
 ) : Screen(), AssistContentScreen {
 
     private var assistUrl: String? = null
@@ -23,13 +24,14 @@ class WebViewScreen(
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
-        val screenModel = rememberScreenModel { WebViewScreenModel(sourceId) }
+        val screenModel = rememberScreenModel { WebViewScreenModel(sourceId, isAnime) }
 
         WebViewScreenContent(
             onNavigateUp = { navigator.pop() },
             initialTitle = initialTitle,
             url = url,
             headers = screenModel.headers,
+            headersHost = screenModel.headersHost,
             onUrlChange = { assistUrl = it },
             onShare = { screenModel.shareWebpage(context, it) },
             onOpenInBrowser = { screenModel.openInBrowser(context, it) },

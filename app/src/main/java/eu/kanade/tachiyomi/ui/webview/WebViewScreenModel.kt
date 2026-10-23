@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
+import eu.kanade.tachiyomi.util.system.toWebViewHeaders
 import eu.kanade.tachiyomi.util.system.toast
 import logcat.LogPriority
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -20,27 +21,32 @@ import uy.kohesive.injekt.api.get
 
 class WebViewScreenModel(
     val sourceId: Long?,
+    private val isAnime: Boolean = false,
     private val MangaSourceManager: MangaSourceManager = Injekt.get(),
     private val AnimeSourceManager: AnimeSourceManager = Injekt.get(),
     private val network: NetworkHelper = Injekt.get(),
 ) : StateScreenModel<StatsScreenState>(StatsScreenState.Loading) {
 
     var headers = emptyMap<String, String>()
+        private set
+    var headersHost: String? = null
+        private set
 
     init {
-        sourceId?.let { MangaSourceManager.get(it) as? HttpSource }?.let { mangasource ->
-            try {
-                headers = mangasource.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to build headers" }
+        try {
+            if (isAnime) {
+                (sourceId?.let(AnimeSourceManager::get) as? AnimeHttpSource)?.let { source ->
+                    headers = source.headers.toWebViewHeaders()
+                    headersHost = source.baseUrl.toHttpUrlOrNull()?.host
+                }
+            } else {
+                (sourceId?.let(MangaSourceManager::get) as? HttpSource)?.let { source ->
+                    headers = source.headers.toWebViewHeaders()
+                    headersHost = source.baseUrl.toHttpUrlOrNull()?.host
+                }
             }
-        }
-        sourceId?.let { AnimeSourceManager.get(it) as? AnimeHttpSource }?.let { animesource ->
-            try {
-                headers = animesource.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to build headers" }
-            }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Failed to build headers" }
         }
     }
 
