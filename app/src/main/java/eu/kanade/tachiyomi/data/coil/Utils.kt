@@ -43,6 +43,24 @@ val Options.customDecoder: Boolean
 
 private val customDecoderKey = Extras.Key(default = false)
 
+fun ImageRequest.Builder.webtoonStrips(
+    enable: Boolean,
+    onDecoded: ((TachiyomiImageDecoder.StripsImage) -> Unit)? = null,
+) = apply {
+    extras[webtoonStripsKey] = enable
+    extras[webtoonStripsOnDecodedKey] = onDecoded
+}
+
+val Options.webtoonStrips: Boolean
+    get() = getExtra(webtoonStripsKey)
+
+private val webtoonStripsKey = Extras.Key(default = false)
+
+internal val Options.webtoonStripsOnDecoded: ((TachiyomiImageDecoder.StripsImage) -> Unit)?
+    get() = getExtra(webtoonStripsOnDecodedKey)
+
+private val webtoonStripsOnDecodedKey = Extras.Key<((TachiyomiImageDecoder.StripsImage) -> Unit)?>(default = null)
+
 fun ImageRequest.Builder.useBackground(enable: Boolean) = apply {
     extras[useBackgroundKey] = enable
 }

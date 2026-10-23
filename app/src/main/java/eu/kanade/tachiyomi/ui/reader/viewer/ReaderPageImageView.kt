@@ -11,6 +11,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
@@ -18,11 +19,11 @@ import androidx.annotation.StyleRes
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.os.postDelayed
 import androidx.core.view.isVisible
-import coil3.BitmapImage
 import coil3.asDrawable
 import coil3.dispose
 import coil3.imageLoader
 import coil3.request.CachePolicy
+import coil3.request.Disposable
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Precision
@@ -34,12 +35,17 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.EASE_OUT_QU
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
 import com.github.chrisbanes.photoview.PhotoView
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
+import eu.kanade.tachiyomi.data.coil.webtoonStrips
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonStripImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
+import okio.Buffer
 import okio.BufferedSource
+import okio.ByteString
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -49,7 +55,7 @@ import uy.kohesive.injekt.api.get
  *
  * Animated image will be drawn by [PhotoView] while [SubsamplingScaleImageView] will take non-animated image.
  *
- * @param isWebtoon if true, [WebtoonSubsamplingImageView] will be used instead of [SubsamplingScaleImageView]
+ * @param isWebtoon if true, [WebtoonStripImageView] will be used for static images unless SSIV is forced,
  * and [AppCompatImageView] will be used instead of [PhotoView]
  */
 open class ReaderPageImageView @JvmOverloads constructor(
@@ -65,6 +71,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private var pageView: View? = null
+
+    private var imageRequest: Disposable? = null
+    private var stripImageOwner: StripImageOwner? = null
+    private var imageRequestGeneration = 0L
 
     private var config: Config? = null
 
@@ -161,6 +171,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setImage(drawable: Drawable, config: Config) {
+        resetImageRequest()
         this.config = config
         if (drawable is Animatable) {
             prepareAnimatedImageView()
@@ -172,22 +183,56 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+        resetImageRequest()
         this.config = config
         if (isAnimated) {
             prepareAnimatedImageView()
             setAnimatedImage(source, config)
+        } else if (isWebtoon && !alwaysDecodeLongStripWithSSIV) {
+            prepareStripImageView()
+            setStripImage(source, config)
         } else {
             prepareNonAnimatedImageView()
             setNonAnimatedImage(source, config)
         }
     }
 
-    fun recycle() = pageView?.let {
-        when (it) {
-            is SubsamplingScaleImageView -> it.recycle()
-            is AppCompatImageView -> it.dispose()
+    fun recycle() {
+        resetImageRequest()
+        pageView?.let {
+            recyclePageView(it)
+            it.isVisible = false
         }
-        it.isVisible = false
+    }
+
+    private fun resetImageRequest() {
+        cancelImageRequest()
+        (pageView as? WebtoonStripImageView)?.recycle()
+    }
+
+    private fun cancelImageRequest() {
+        imageRequestGeneration++
+        stripImageOwner?.cancel()
+        stripImageOwner = null
+        imageRequest?.dispose()
+        imageRequest = null
+    }
+
+    private fun recyclePageView(view: View) {
+        when (view) {
+            is SubsamplingScaleImageView -> view.recycle()
+            is AppCompatImageView -> {
+                (view.drawable as? Animatable)?.stop()
+                view.setImageDrawable(null)
+                view.dispose()
+            }
+            is WebtoonStripImageView -> view.recycle()
+        }
+    }
+
+    private fun removePageView() {
+        pageView?.let(::recyclePageView)
+        removeView(pageView)
     }
 
     /**
@@ -246,7 +291,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun prepareNonAnimatedImageView() {
         if (pageView is SubsamplingScaleImageView) return
-        removeView(pageView)
+        removePageView()
 
         pageView = if (isWebtoon) {
             WebtoonSubsamplingImageView(context)
@@ -314,34 +359,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 isVisible = true
             }
             is BufferedSource -> {
-                if (!isWebtoon || alwaysDecodeLongStripWithSSIV) {
-                    setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
-                    setImage(ImageSource.inputStream(data.inputStream()))
-                    isVisible = true
-                    return@apply
-                }
-
-                ImageRequest.Builder(context)
-                    .data(data)
-                    .memoryCachePolicy(CachePolicy.DISABLED)
-                    .diskCachePolicy(CachePolicy.DISABLED)
-                    .target(
-                        onSuccess = { result ->
-                            val image = result as BitmapImage
-                            setImage(ImageSource.bitmap(image.bitmap))
-                            isVisible = true
-                        },
-                        onError = {
-                            onImageLoadError()
-                        },
-                    )
-                    .size(ViewSizeResolver(this@ReaderPageImageView))
-                    .precision(Precision.INEXACT)
-                    .cropBorders(config.cropBorders)
-                    .customDecoder(true)
-                    .crossfade(false)
-                    .build()
-                    .let(context.imageLoader::enqueue)
+                setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
+                setImage(ImageSource.inputStream(data.inputStream()))
+                isVisible = true
             }
             else -> {
                 throw IllegalArgumentException("Not implemented for class ${data::class.simpleName}")
@@ -349,9 +369,81 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
+    private fun prepareStripImageView() {
+        if (pageView is WebtoonStripImageView) return
+        removePageView()
+        pageView = WebtoonStripImageView(context)
+        addView(pageView, MATCH_PARENT, WRAP_CONTENT)
+    }
+
+    private fun setStripImage(source: BufferedSource, config: Config) {
+        val view = pageView as? WebtoonStripImageView ?: return
+        // A fresh source is needed after Coil closes each decode, including off-screen reloads.
+        val bytes = source.use { it.readByteString() }
+        var loaded = false
+        val reload: () -> Unit = {
+            if (imageRequest?.isDisposed != false) {
+                requestStrips(view, bytes, config) {
+                    if (!loaded) {
+                        loaded = true
+                        view.isVisible = true
+                        onImageLoaded()
+                    }
+                }
+            }
+        }
+        view.onReload = reload
+        view.onRelease = ::cancelImageRequest
+        reload()
+    }
+
+    private fun requestStrips(
+        view: WebtoonStripImageView,
+        bytes: ByteString,
+        config: Config,
+        onLoaded: () -> Unit,
+    ) {
+        cancelImageRequest()
+        val generation = imageRequestGeneration
+        val owner = StripImageOwner()
+        stripImageOwner = owner
+        imageRequest = ImageRequest.Builder(context)
+            .data(Buffer().write(bytes))
+            .memoryCachePolicy(CachePolicy.DISABLED)
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .target(
+                onSuccess = { result ->
+                    val image = result as TachiyomiImageDecoder.StripsImage
+                    if (generation == imageRequestGeneration && pageView === view && owner.take(image)) {
+                        stripImageOwner = null
+                        view.setImage(image)
+                        onLoaded()
+                    } else {
+                        owner.cancel()
+                        image.recycle()
+                    }
+                },
+                onError = {
+                    owner.cancel()
+                    if (generation == imageRequestGeneration && pageView === view) {
+                        stripImageOwner = null
+                        onImageLoadError()
+                    }
+                },
+            )
+            .size(ViewSizeResolver(this))
+            .precision(Precision.INEXACT)
+            .cropBorders(config.cropBorders)
+            .customDecoder(true)
+            .webtoonStrips(true, owner::offer)
+            .crossfade(false)
+            .build()
+            .let(context.imageLoader::enqueue)
+    }
+
     private fun prepareAnimatedImageView() {
         if (pageView is AppCompatImageView) return
-        removeView(pageView)
+        removePageView()
 
         pageView = if (isWebtoon) {
             AppCompatImageView(context)
@@ -396,12 +488,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setZoomTransitionDuration(config.zoomDuration.getSystemScaledDuration())
         }
 
+        val generation = imageRequestGeneration
         val request = ImageRequest.Builder(context)
             .data(data)
             .memoryCachePolicy(CachePolicy.DISABLED)
             .diskCachePolicy(CachePolicy.DISABLED)
             .target(
                 onSuccess = { result ->
+                    if (generation != imageRequestGeneration || pageView !== this) return@target
                     val drawable = result.asDrawable(context.resources)
                     setImageDrawable(drawable)
                     (drawable as? Animatable)?.start()
@@ -409,12 +503,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     this@ReaderPageImageView.onImageLoaded()
                 },
                 onError = {
-                    this@ReaderPageImageView.onImageLoadError()
+                    if (generation == imageRequestGeneration && pageView === this) {
+                        this@ReaderPageImageView.onImageLoadError()
+                    }
                 },
             )
             .crossfade(false)
             .build()
-        context.imageLoader.enqueue(request)
+        imageRequest = context.imageLoader.enqueue(request)
     }
 
     private fun Int.getSystemScaledDuration(): Int {
@@ -436,6 +532,36 @@ open class ReaderPageImageView @JvmOverloads constructor(
         LEFT,
         CENTER,
         RIGHT,
+    }
+}
+
+/** Owns decoder results even when Coil cancellation prevents delivery to the view target. */
+internal class StripImageOwner {
+    private var active = true
+    private var image: TachiyomiImageDecoder.StripsImage? = null
+
+    @Synchronized
+    fun offer(image: TachiyomiImageDecoder.StripsImage) {
+        if (active) {
+            this.image = image
+        } else {
+            image.recycle()
+        }
+    }
+
+    @Synchronized
+    fun take(image: TachiyomiImageDecoder.StripsImage): Boolean {
+        if (!active || this.image !== image) return false
+        this.image = null
+        active = false
+        return true
+    }
+
+    @Synchronized
+    fun cancel() {
+        active = false
+        image?.recycle()
+        image = null
     }
 }
 
