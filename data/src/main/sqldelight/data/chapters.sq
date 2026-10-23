@@ -122,3 +122,7 @@ WHERE _id = :chapterId;
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
+
+getChaptersByMangaIds:
+SELECT * FROM chapters
+WHERE manga_id IN :mangaIds;

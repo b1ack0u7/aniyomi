@@ -21,8 +21,21 @@ class BackupFileValidator(
      * @return List of missing sources or missing trackers.
      */
     fun validate(uri: Uri): Results {
-        val backup = try {
-            BackupDecoder(context).decode(uri)
+        val decoder = BackupDecoder(context)
+        val (backup, trackers) = try {
+            val summary = decoder.decodeMetadata(uri)
+            val trackerIds = mutableSetOf<Int>()
+            decoder.openReader(uri, summary.isLegacy, collectMetadata = false).use { reader ->
+                while (true) {
+                    val ids = when (reader.nextEntry()) {
+                        BackupEntryType.MANGA -> reader.readMangaEntry().tracking.map { it.syncId }
+                        BackupEntryType.ANIME -> reader.readAnimeEntry().tracking.map { it.syncId }
+                        null -> break
+                    }
+                    trackerIds.addAll(ids)
+                }
+            }
+            summary.metadata to trackerIds
         } catch (e: Exception) {
             throw IllegalStateException(e)
         }
@@ -54,13 +67,6 @@ class BackupFileValidator(
                 .distinct()
                 .sorted()
 
-        val animeTrackers = backup.backupAnime
-            .flatMap { it.tracking }
-            .map { it.syncId }
-        val mangaTrackers = backup.backupManga
-            .flatMap { it.tracking }
-            .map { it.syncId }
-        val trackers = (animeTrackers + mangaTrackers).distinct()
         val missingTrackers = trackers
             .mapNotNull { trackerManager.get(it.toLong()) }
             .filter { !it.isLoggedIn }

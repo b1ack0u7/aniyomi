@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.preferenceKey
 import eu.kanade.tachiyomi.source.sourcePreferences
+import kotlinx.coroutines.flow.first
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
@@ -32,7 +33,9 @@ class PreferenceBackupCreator(
             .withPrivatePreferences(includePrivatePreferences)
     }
 
-    fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+    suspend fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+        animeSourceManager.isInitialized.first { it }
+        mangaSourceManager.isInitialized.first { it }
         val animePreferences = animeSourceManager.getCatalogueSources()
             .filterIsInstance<ConfigurableAnimeSource>()
             .map {

@@ -96,6 +96,17 @@ WHERE favorite = 0 AND _id IN (
     WHERE seen = 1 OR last_second_seen != 0
 );
 
+getBackupAnimeBatch:
+SELECT *
+FROM animes
+WHERE _id > :afterId AND _id <= :upToId
+AND (favorite = 1 OR (:includeReadEntries = 1 AND EXISTS (
+    SELECT 1 FROM episodes
+    WHERE anime_id = animes._id AND (seen = 1 OR last_second_seen != 0)
+)))
+ORDER BY _id
+LIMIT :limit;
+
 getAllAnime:
 SELECT *
 FROM animes;
@@ -199,3 +210,5 @@ WHERE _id = :animeId;
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
+getMaxAnimeId:
+SELECT coalesce(max(_id), 0) FROM animes;

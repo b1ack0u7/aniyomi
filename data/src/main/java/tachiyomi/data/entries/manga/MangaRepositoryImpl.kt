@@ -54,6 +54,27 @@ class MangaRepositoryImpl(
         return handler.awaitList { mangasQueries.getReadMangaNotInLibrary(MangaMapper::mapManga) }
     }
 
+    override suspend fun getMaxMangaId(): Long {
+        return handler.awaitOne { mangasQueries.getMaxMangaId() }
+    }
+
+    override suspend fun getBackupMangaBatch(
+        afterId: Long,
+        upToId: Long,
+        limit: Long,
+        includeReadEntries: Boolean,
+    ): List<Manga> {
+        return handler.awaitList {
+            mangasQueries.getBackupMangaBatch(
+                afterId = afterId,
+                upToId = upToId,
+                includeReadEntries = if (includeReadEntries) 1 else 0,
+                limit = limit,
+                mapper = MangaMapper::mapManga,
+            )
+        }
+    }
+
     override suspend fun getLibraryManga(): List<LibraryManga> {
         return handler.awaitList { libraryViewQueries.library(MangaMapper::mapLibraryManga) }
     }

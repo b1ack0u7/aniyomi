@@ -2,9 +2,6 @@ package eu.kanade.tachiyomi.data.backup
 
 import android.content.Context
 import android.net.Uri
-import eu.kanade.tachiyomi.data.backup.models.Backup
-import eu.kanade.tachiyomi.data.backup.models.LegacyBackup
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.protobuf.ProtoBuf
 import okio.buffer
 import okio.gzip
@@ -19,41 +16,29 @@ class BackupDecoder(
     private val context: Context,
     private val parser: ProtoBuf = Injekt.get(),
 ) {
-    /**
-     * Decode a potentially-gzipped backup.
-     */
-    fun decode(uri: Uri): Backup {
-        return context.contentResolver.openInputStream(uri)!!.use { inputStream ->
-            val source = inputStream.source().buffer()
+    fun decodeMetadata(uri: Uri): BackupSummary = openReader(uri).use { it.readSummary() }
 
-            val peeked = source.peek().apply {
-                require(2)
+    /** Opens raw or gzipped protobuf; the caller owns the returned reader. */
+    fun openReader(uri: Uri, legacy: Boolean = false, collectMetadata: Boolean = true): BackupReader {
+        val input = context.contentResolver.openInputStream(uri) ?: throw IOException("Cannot open backup")
+        var source = input.source().buffer()
+        try {
+            if (source.request(2) && source.peek().readShort().toInt() == GZIP_SIGNATURE) {
+                source = source.gzip().buffer()
             }
-            val id1id2 = peeked.readShort()
-            val backupString = when (id1id2.toInt()) {
-                0x1f8b -> source.gzip().buffer() // 0x1f8b is gzip magic bytes
-                MAGIC_JSON_SIGNATURE1, MAGIC_JSON_SIGNATURE2, MAGIC_JSON_SIGNATURE3 -> {
-                    throw IOException(context.stringResource(MR.strings.invalid_backup_file_json))
-                }
-                else -> source
-            }.use { it.readByteArray() }
-
-            try {
-                if (BackupDetector.isLegacyBackup(backupString)) {
-                    parser.decodeFromByteArray(LegacyBackup.serializer(), backupString)
-                        .toBackup()
-                } else {
-                    parser.decodeFromByteArray(Backup.serializer(), backupString)
-                }
-            } catch (_: SerializationException) {
-                throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+            source.require(1)
+            if (source.request(2) && source.peek().readShort().toInt() in JSON_SIGNATURES) {
+                throw IOException(context.stringResource(MR.strings.invalid_backup_file_json))
             }
+            return BackupReader(source, parser, legacy, collectMetadata)
+        } catch (e: Exception) {
+            source.close()
+            throw e
         }
     }
 
     companion object {
-        private const val MAGIC_JSON_SIGNATURE1 = 0x7b7d // `{}`
-        private const val MAGIC_JSON_SIGNATURE2 = 0x7b22 // `{"`
-        private const val MAGIC_JSON_SIGNATURE3 = 0x7b0a // `{\n`
+        private const val GZIP_SIGNATURE = 0x1f8b
+        private val JSON_SIGNATURES = setOf(0x7b7d, 0x7b22, 0x7b0a)
     }
 }

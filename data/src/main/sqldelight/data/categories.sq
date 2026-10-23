@@ -90,3 +90,9 @@ flags = coalesce(?, flags);
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
+
+getCategoryOrdersByMangaIds:
+SELECT MC.manga_id, C.sort
+FROM categories C
+JOIN mangas_categories MC ON C._id = MC.category_id
+WHERE MC.manga_id IN :mangaIds;

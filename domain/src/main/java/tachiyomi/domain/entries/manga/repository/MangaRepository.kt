@@ -17,6 +17,15 @@ interface MangaRepository {
 
     suspend fun getMangaFavorites(): List<Manga>
 
+    suspend fun getMaxMangaId(): Long
+
+    suspend fun getBackupMangaBatch(
+        afterId: Long,
+        upToId: Long,
+        limit: Long,
+        includeReadEntries: Boolean,
+    ): List<Manga>
+
     suspend fun getReadMangaNotInLibrary(): List<Manga>
 
     suspend fun getLibraryManga(): List<LibraryManga>

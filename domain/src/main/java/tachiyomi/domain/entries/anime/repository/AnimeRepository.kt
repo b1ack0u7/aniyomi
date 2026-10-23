@@ -19,6 +19,15 @@ interface AnimeRepository {
 
     suspend fun getAnimeFavorites(): List<Anime>
 
+    suspend fun getMaxAnimeId(): Long
+
+    suspend fun getBackupAnimeBatch(
+        afterId: Long,
+        upToId: Long,
+        limit: Long,
+        includeReadEntries: Boolean,
+    ): List<Anime>
+
     suspend fun getWatchedAnimeNotInLibrary(): List<Anime>
 
     suspend fun getLibraryAnime(): List<LibraryAnime>

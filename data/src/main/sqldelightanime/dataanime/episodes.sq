@@ -116,3 +116,7 @@ WHERE _id = :episodeId;
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
+
+getEpisodesByAnimeIds:
+SELECT * FROM episodes
+WHERE anime_id IN :animeIds;

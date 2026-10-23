@@ -89,6 +89,17 @@ WHERE favorite = 0 AND _id IN (
     WHERE read = 1 OR last_page_read != 0
 );
 
+getBackupMangaBatch:
+SELECT *
+FROM mangas
+WHERE _id > :afterId AND _id <= :upToId
+AND (favorite = 1 OR (:includeReadEntries = 1 AND EXISTS (
+    SELECT 1 FROM chapters
+    WHERE manga_id = mangas._id AND (read = 1 OR last_page_read != 0)
+)))
+ORDER BY _id
+LIMIT :limit;
+
 getAllManga:
 SELECT *
 FROM mangas;
@@ -183,3 +194,5 @@ WHERE _id = :mangaId;
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
+getMaxMangaId:
+SELECT coalesce(max(_id), 0) FROM mangas;

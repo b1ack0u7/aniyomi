@@ -15,9 +15,9 @@ class ExtensionsBackupCreator(
     private val mangaExtensionManager: MangaExtensionManager = Injekt.get(),
 ) {
 
-    operator fun invoke(): List<BackupExtension> {
+    suspend operator fun invoke(): List<BackupExtension> {
         val installedExtensions = mutableListOf<BackupExtension>()
-        animeExtensionManager.installedExtensionsFlow.value.forEach {
+        animeExtensionManager.getInstalledExtensions().forEach {
             val packageName = it.pkgName
             val apk = File(
                 context.packageManager
@@ -30,7 +30,7 @@ class ExtensionsBackupCreator(
                 BackupExtension(packageName, apk),
             )
         }
-        mangaExtensionManager.installedExtensionsFlow.value.forEach {
+        mangaExtensionManager.getInstalledExtensions().forEach {
             val packageName = it.pkgName
             val apk = File(
                 context.packageManager

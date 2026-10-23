@@ -43,15 +43,11 @@ class MangaRestorer(
         currentFetchWindow = fetchInterval.getWindow(now)
     }
 
-    suspend fun sortByNew(backupMangas: List<BackupManga>): List<BackupManga> {
+    suspend fun getExistingMatcher(): (Long, String) -> Boolean {
         val urlsBySource = handler.awaitList { mangasQueries.getAllMangaSourceAndUrl() }
             .groupBy({ it.source }, { it.url })
-
-        return backupMangas
-            .sortedWith(
-                compareBy<BackupManga> { it.url in urlsBySource[it.source].orEmpty() }
-                    .then(compareByDescending { it.lastModifiedAt }),
-            )
+            .mapValues { (_, urls) -> urls.toHashSet() }
+        return { source, url -> urlsBySource[source]?.contains(url) == true }
     }
 
     suspend fun restore(

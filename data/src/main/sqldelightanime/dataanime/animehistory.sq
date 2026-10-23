@@ -75,3 +75,9 @@ DO UPDATE
 SET
     last_seen = :seenAt
 WHERE episode_id = :episodeId;
+
+getBackupHistoryByAnimeIds:
+SELECT C.anime_id, C.url, H.last_seen
+FROM animehistory H
+JOIN episodes C ON H.episode_id = C._id
+WHERE C.anime_id IN :animeIds;

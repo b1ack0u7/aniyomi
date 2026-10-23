@@ -59,3 +59,7 @@ SET
     finish_date = coalesce(:finishDate, finish_date),
     private = coalesce(:private, private)
 WHERE _id = :id;
+
+getTracksByMangaIds:
+SELECT * FROM manga_sync
+WHERE manga_id IN :mangaIds;

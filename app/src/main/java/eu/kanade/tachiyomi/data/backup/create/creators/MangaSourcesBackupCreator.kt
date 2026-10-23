@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
-import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.source.MangaSource
 import tachiyomi.domain.source.manga.service.MangaSourceManager
@@ -11,11 +10,9 @@ class MangaSourcesBackupCreator(
     private val mangaSourceManager: MangaSourceManager = Injekt.get(),
 ) {
 
-    operator fun invoke(mangas: List<BackupManga>): List<BackupSource> {
-        return mangas
+    operator fun invoke(sourceIds: Set<Long>): List<BackupSource> {
+        return sourceIds
             .asSequence()
-            .map(BackupManga::source)
-            .distinct()
             .map(mangaSourceManager::getOrStub)
             .map { it.toBackupSource() }
             .toList()

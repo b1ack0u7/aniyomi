@@ -56,6 +56,27 @@ class AnimeRepositoryImpl(
         return handler.awaitList { animesQueries.getWatchedAnimeNotInLibrary(AnimeMapper::mapAnime) }
     }
 
+    override suspend fun getMaxAnimeId(): Long {
+        return handler.awaitOne { animesQueries.getMaxAnimeId() }
+    }
+
+    override suspend fun getBackupAnimeBatch(
+        afterId: Long,
+        upToId: Long,
+        limit: Long,
+        includeReadEntries: Boolean,
+    ): List<Anime> {
+        return handler.awaitList {
+            animesQueries.getBackupAnimeBatch(
+                afterId = afterId,
+                upToId = upToId,
+                includeReadEntries = if (includeReadEntries) 1 else 0,
+                limit = limit,
+                mapper = AnimeMapper::mapAnime,
+            )
+        }
+    }
+
     override suspend fun getLibraryAnime(): List<LibraryAnime> {
         return handler.awaitList { animelibViewQueries.animelib(AnimeMapper::mapLibraryAnime) }
     }

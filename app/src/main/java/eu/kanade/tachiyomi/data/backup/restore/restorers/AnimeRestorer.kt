@@ -43,41 +43,25 @@ class AnimeRestorer(
         currentFetchWindow = fetchInterval.getWindow(now)
     }
 
-    suspend fun sortByNew(backupAnimes: List<BackupAnime>): List<BackupAnime> {
+    suspend fun getExistingMatcher(): (Long, String) -> Boolean {
         val urlsBySource = handler.awaitList { animesQueries.getAllAnimeSourceAndUrl() }
             .groupBy({ it.source }, { it.url })
-
-        return backupAnimes
-            .sortedWith(
-                compareBy<BackupAnime> { it.url in urlsBySource[it.source].orEmpty() }
-                    .then(compareByDescending { it.lastModifiedAt }),
-            )
+            .mapValues { (_, urls) -> urls.toHashSet() }
+        return { source, url -> urlsBySource[source]?.contains(url) == true }
     }
 
     suspend fun restore(
         backupAnime: BackupAnime,
         backupCategories: List<BackupCategory>,
-        backupSeasons: List<BackupAnime>,
-    ) {
-        handler.await(inTransaction = true) {
+        parentId: Long?,
+    ): Long {
+        return handler.await(inTransaction = true) {
             val dbAnime = findExistingAnime(backupAnime)
-            val anime = backupAnime.getAnimeImpl()
+            val anime = backupAnime.getAnimeImpl().copy(parentId = parentId)
             val restoredAnime = if (dbAnime == null) {
                 restoreNewAnime(anime)
             } else {
                 restoreExistingAnime(anime, dbAnime)
-            }
-
-            backupSeasons.forEach { bs ->
-                val dbAnime = findExistingAnime(bs)
-                val anime = bs.getAnimeImpl().copy(
-                    parentId = restoredAnime.id,
-                )
-                if (dbAnime == null) {
-                    restoreNewAnime(anime)
-                } else {
-                    restoreExistingAnime(anime, dbAnime)
-                }
             }
 
             restoreAnimeDetails(
@@ -88,6 +72,7 @@ class AnimeRestorer(
                 history = backupAnime.history,
                 tracks = backupAnime.tracking,
             )
+            restoredAnime.id
         }
     }
 
