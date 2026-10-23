@@ -13,6 +13,8 @@ class ReaderPreferences(
 
     // region General
 
+    fun loadAheadOnlyOverWifi() = preferenceStore.getBoolean("pref_reader_load_ahead_only_over_wifi", true)
+
     fun pageTransitions() = preferenceStore.getBoolean("pref_enable_transitions_key", true)
 
     fun flashOnPageChange() = preferenceStore.getBoolean("pref_reader_flash", false)

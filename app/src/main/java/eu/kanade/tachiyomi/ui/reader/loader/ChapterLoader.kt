@@ -28,6 +28,7 @@ class ChapterLoader(
     private val downloadProvider: MangaDownloadProvider,
     private val manga: Manga,
     private val source: MangaSource,
+    private val canLoadAhead: () -> Boolean = { false },
 ) {
 
     private val readerPreferences: ReaderPreferences by injectLazy()
@@ -61,6 +62,7 @@ class ChapterLoader(
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
+                if (loader is HttpPageLoader) loader.preloadPages(pages, chapter.requestedPage)
             } catch (e: Throwable) {
                 chapter.state = ReaderChapter.State.Error(e)
                 throw e
@@ -102,7 +104,7 @@ class ChapterLoader(
                     is Format.Epub -> EpubPageLoader(format.file.epubReader(context))
                 }
             }
-            source is HttpSource -> HttpPageLoader(chapter, source)
+            source is HttpSource -> HttpPageLoader(chapter, source, canLoadAhead = canLoadAhead)
             source is StubMangaSource -> error(
                 context.stringResource(MR.strings.source_not_installed, source.toString()),
             )

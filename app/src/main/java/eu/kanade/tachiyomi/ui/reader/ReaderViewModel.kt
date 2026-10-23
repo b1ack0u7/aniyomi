@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
+import eu.kanade.tachiyomi.ui.reader.loader.HttpPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -42,8 +43,10 @@ import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -283,7 +286,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
                     val context = Injekt.get<Application>()
                     val source = sourceManager.getOrStub(manga.source)
-                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
+                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source, ::canLoadAhead)
 
                     loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
                     Result.success(true)
@@ -330,6 +333,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 )
             }
         }
+        preloadNextChapterAfter(newChapters)
         return newChapters
     }
 
@@ -379,6 +383,26 @@ class ReaderViewModel @JvmOverloads constructor(
             mutableState.update { it.copy(isLoadingAdjacentChapter = false) }
         }
     }
+
+    private var nextChapterPreloadJob: Job? = null
+
+    private fun preloadNextChapterAfter(chapters: ViewerChapters) {
+        nextChapterPreloadJob?.cancel()
+        val next = chapters.nextChapter ?: return
+        nextChapterPreloadJob = viewModelScope.launchIO {
+            if (!canLoadAhead()) return@launchIO
+            val current = chapters.currChapter
+            if (current.pageLoader is HttpPageLoader) {
+                current.pages.orEmpty().forEach { page ->
+                    page.statusFlow.first { it == Page.State.READY || it == Page.State.ERROR }
+                }
+            }
+            if (canLoadAhead()) preload(next)
+        }
+    }
+
+    private fun canLoadAhead(): Boolean =
+        !readerPreferences.loadAheadOnlyOverWifi().get() || Injekt.get<Application>().activeNetworkState().isWifi
 
     /**
      * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so
