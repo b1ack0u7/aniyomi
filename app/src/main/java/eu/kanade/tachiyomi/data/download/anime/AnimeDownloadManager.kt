@@ -116,6 +116,10 @@ class AnimeDownloadManager(
         return queueState.value.find { it.episode.id == episodeId }
     }
 
+    fun getQueuedDownloadsByEpisodeId(): Map<Long, AnimeDownload> {
+        return queueState.value.associateBy { it.episode.id }
+    }
+
     fun startDownloadNow(episodeId: Long) {
         val existingDownload = getQueuedDownloadOrNull(episodeId)
         // If not in queue try to start a new download
@@ -195,6 +199,11 @@ class AnimeDownloadManager(
             videoTitle = "download: " + file.uri.toString(),
             initialized = true,
         ).apply { status = Video.State.READY }
+    }
+
+    /** Returns downloaded IDs among episodes belonging to [anime]. */
+    fun getDownloadedEpisodeIds(episodes: List<Episode>, anime: Anime): Set<Long> {
+        return cache.getDownloadedEpisodeIds(episodes, anime.title, anime.source)
     }
 
     /**

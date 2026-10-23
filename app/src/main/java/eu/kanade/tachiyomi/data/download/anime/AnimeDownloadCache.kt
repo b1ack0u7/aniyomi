@@ -124,6 +124,21 @@ class AnimeDownloadCache(
             .launchIn(scope)
     }
 
+    /** Returns downloaded IDs among episodes belonging to the same anime. */
+    fun getDownloadedEpisodeIds(episodes: List<Episode>, animeTitle: String, sourceId: Long): Set<Long> {
+        renewCache()
+
+        val animeDir = rootDownloadsDir.sourceDirs[sourceId]?.animeDirs?.get(provider.getAnimeDirName(animeTitle))
+        if (animeDir == null || animeDir.episodeDirs.isEmpty()) return emptySet()
+
+        return episodes
+            .filter { episode ->
+                provider.getValidEpisodeDirNames(episode.name, episode.scanlator)
+                    .any { it in animeDir.episodeDirs }
+            }
+            .mapTo(HashSet()) { it.id }
+    }
+
     /**
      * Returns true if the episode is downloaded.
      *

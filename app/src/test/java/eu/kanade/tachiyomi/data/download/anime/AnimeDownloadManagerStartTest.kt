@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.download.anime
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.anime.model.AnimeDownload
+import io.kotest.matchers.shouldBe
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.items.episode.model.Episode
 
 class AnimeDownloadManagerStartTest {
 
@@ -96,5 +98,24 @@ class AnimeDownloadManagerStartTest {
         verify(exactly = 0) { downloader.pauseByUser() }
         verify(exactly = 0) { downloader.stop(any()) }
         verify(exactly = 0) { downloader.resumeChallenges() }
+    }
+
+    @Test
+    fun `batch lookup keeps active downloads and refreshes after queue changes`() {
+        val first = AnimeDownload(mockk(), mockk(), Episode.create().copy(id = 10))
+        val second = AnimeDownload(mockk(), mockk(), Episode.create().copy(id = 20))
+        queue.value = listOf(first, second)
+
+        val snapshot = manager.getQueuedDownloadsByEpisodeId()
+        snapshot.keys shouldBe setOf(10L, 20L)
+        first.status = AnimeDownload.State.DOWNLOADING
+        snapshot[10]?.status shouldBe AnimeDownload.State.DOWNLOADING
+
+        queue.value = listOf(second)
+        snapshot.keys shouldBe setOf(10L, 20L)
+        manager.getQueuedDownloadsByEpisodeId() shouldBe mapOf(20L to second)
+
+        queue.value = emptyList()
+        manager.getQueuedDownloadsByEpisodeId() shouldBe emptyMap()
     }
 }

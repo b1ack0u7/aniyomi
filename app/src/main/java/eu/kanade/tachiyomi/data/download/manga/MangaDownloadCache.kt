@@ -124,6 +124,21 @@ class MangaDownloadCache(
             .launchIn(scope)
     }
 
+    /** Returns downloaded IDs among chapters belonging to the same manga. */
+    fun getDownloadedChapterIds(chapters: List<Chapter>, mangaTitle: String, sourceId: Long): Set<Long> {
+        renewCache()
+
+        val mangaDir = rootDownloadsDir.sourceDirs[sourceId]?.mangaDirs?.get(provider.getMangaDirName(mangaTitle))
+        if (mangaDir == null || mangaDir.chapterDirs.isEmpty()) return emptySet()
+
+        return chapters
+            .filter { chapter ->
+                provider.getValidChapterDirNames(chapter.name, chapter.scanlator)
+                    .any { it in mangaDir.chapterDirs }
+            }
+            .mapTo(HashSet()) { it.id }
+    }
+
     /**
      * Returns true if the chapter is downloaded.
      *

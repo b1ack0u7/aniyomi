@@ -109,6 +109,10 @@ class MangaDownloadManager(
         return queueState.value.find { it.chapter.id == chapterId }
     }
 
+    fun getQueuedDownloadsByChapterId(): Map<Long, MangaDownload> {
+        return queueState.value.associateBy { it.chapter.id }
+    }
+
     fun startDownloadNow(chapterId: Long) {
         val existingDownload = getQueuedDownloadOrNull(chapterId)
         // If not in queue try to start a new download
@@ -180,6 +184,11 @@ class MangaDownloadManager(
             .mapIndexed { i, file ->
                 Page(i, uri = file.uri).apply { status = Page.State.READY }
             }
+    }
+
+    /** Returns downloaded IDs among chapters belonging to [manga]. */
+    fun getDownloadedChapterIds(chapters: List<Chapter>, manga: Manga): Set<Long> {
+        return cache.getDownloadedChapterIds(chapters, manga.title, manga.source)
     }
 
     /**
