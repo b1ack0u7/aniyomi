@@ -6,7 +6,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.Dialog
@@ -78,7 +80,7 @@ fun AdaptiveSheet(
 
     // Read from the composition hosting the activity window: a dialog window doesn't get the system
     // bar insets dispatched to its own composition, so they'd all resolve to zero inside it.
-    val windowInsets = WindowInsets.systemBars
+    val windowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
     Dialog(
         onDismissRequest = onDismissRequest,

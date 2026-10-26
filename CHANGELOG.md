@@ -42,6 +42,8 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Fixed
 
+- Keep library filters and other adaptive dialogs fully visible around system bars and display cutouts in anime and manga
+
 - Draw static webtoon pages in bounded immutable strips, release large pages offscreen and reload safely without replacing the existing reader or its SSIV fallback; adapted from Mihon [b5856135c](https://github.com/mihonapp/mihon/commit/b5856135c)
 
 - Coordinate concurrent Cloudflare challenges by host, cancel waiting requests cleanly, and solve non-GET challenges from the site root while retrying the original request; adapted from Mihon [5a5ff22c3](https://github.com/mihonapp/mihon/commit/5a5ff22c3) and [7ae858e60](https://github.com/mihonapp/mihon/commit/7ae858e60)
