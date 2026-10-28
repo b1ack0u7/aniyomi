@@ -281,7 +281,7 @@ class WebtoonPageHolder(
                 (parentHeight * 0.8).toInt(),
             )
             errorLayout?.actionRetry?.setOnClickListener {
-                page?.let { it.chapter.pageLoader?.retryPage(it) }
+                page?.let { viewer.activity.retryPage(it) }
             }
         }
 

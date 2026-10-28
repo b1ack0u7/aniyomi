@@ -35,6 +35,10 @@ class NetworkHelper(
         if (preferences.verboseLogging().get()) {
             val httpLoggingInterceptor = HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.HEADERS
+                redactHeader("Cookie")
+                redactHeader("Set-Cookie")
+                redactHeader("Authorization")
+                redactHeader("Proxy-Authorization")
             }
             builder.addNetworkInterceptor(httpLoggingInterceptor)
         }

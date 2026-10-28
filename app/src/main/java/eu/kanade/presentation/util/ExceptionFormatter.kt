@@ -38,17 +38,35 @@ val Throwable.formattedMessage: String
             is CloudflareChallengeException -> return stringResource(MR.strings.information_cloudflare_bypass_failure)
             is SourceRequestPausedException -> {
                 val retryAt = exception.retryAt
+                if (exception.forbidden) {
+                    return if (exception.rateLimited && retryAt != null && retryAt > System.currentTimeMillis()) {
+                        stringResource(
+                            AYMR.strings.source_access_denied_rate_limited_until,
+                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(retryAt)),
+                        )
+                    } else {
+                        stringResource(AYMR.strings.source_access_denied_error)
+                    }
+                }
                 return if (retryAt == null) {
                     stringResource(MR.strings.information_cloudflare_bypass_failure)
                 } else {
                     stringResource(
-                        AYMR.strings.smart_download_waiting,
+                        if (exception.rateLimited) {
+                            AYMR.strings.source_rate_limited_until
+                        } else {
+                            AYMR.strings.smart_download_waiting
+                        },
                         DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(retryAt)),
                     )
                 }
             }
             is DisabledTorrServerException -> return stringResource(AYMR.strings.torrserver_disabled)
-            is HttpException -> return stringResource(MR.strings.exception_http, exception.code)
+            is HttpException -> return when (exception.code) {
+                429 -> stringResource(AYMR.strings.source_rate_limited_error)
+                403 -> stringResource(AYMR.strings.source_access_denied_error)
+                else -> stringResource(MR.strings.exception_http, exception.code)
+            }
             is UnknownHostException -> {
                 return if (!isOnline()) {
                     stringResource(MR.strings.exception_offline)

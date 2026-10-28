@@ -20,9 +20,13 @@ import eu.kanade.tachiyomi.data.database.models.manga.toDomainChapter
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadProvider
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.network.SourceAccessRestriction
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
+import eu.kanade.tachiyomi.network.SourceRequestPausedException
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
@@ -50,6 +54,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -58,6 +63,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.preference.toggle
@@ -106,6 +112,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     private val getIncognitoState: GetMangaIncognitoState = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val sourceRequests: SourceRequestCoordinator = Injekt.get(),
 ) : ViewModel() {
 
     private val mutableState = MutableStateFlow(State())
@@ -114,11 +121,16 @@ class ReaderViewModel @JvmOverloads constructor(
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
 
+    private val sourceRestriction = MutableStateFlow<SourceAccessRestriction?>(null)
+
     /**
      * The manga loaded in the reader. It can be null when instantiated for a short time.
      */
     val manga: Manga?
         get() = state.value.manga
+
+    val sourceName: String
+        get() = manga?.let { sourceManager.getOrStub(it.source).name }.orEmpty()
 
     /**
      * The chapter id of the currently loaded chapter. Used to restore from process kill.
@@ -243,6 +255,30 @@ class ReaderViewModel @JvmOverloads constructor(
                 chapterId = currentChapter.chapter.id!!
             }
             .launchIn(viewModelScope)
+
+        viewModelScope.launchIO {
+            state.map { it.manga?.source }.filterNotNull().distinctUntilChanged().collectLatest { source ->
+                sourceRequests.observeMangaRestriction(source).collectLatest { restriction ->
+                    sourceRestriction.value = restriction
+                    if (restriction != null) {
+                        mutableState.update {
+                            val dialog = it.dialog as? Dialog.SourcePaused ?: return@update it
+                            it.copy(dialog = dialog.copy(restriction = restriction))
+                        }
+                    }
+                }
+            }
+        }
+        viewModelScope.launchIO {
+            state.map { it.selectedPage }.filterNotNull().distinctUntilChanged().collectLatest { page ->
+                page.collectSourceAccessWarnings(
+                    sourceRestriction,
+                    state.map { it.dialog == null }.distinctUntilChanged(),
+                ) {
+                    showSourcePausedDialog(page, onlyWhenNoDialog = true)
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -311,6 +347,9 @@ class ReaderViewModel @JvmOverloads constructor(
         loader: ChapterLoader,
         chapter: ReaderChapter,
     ): ViewerChapters {
+        getCurrentChapter()?.takeIf { it !== chapter }?.let {
+            (it.pageLoader as? HttpPageLoader)?.stopPreloading()
+        }
         loader.loadChapter(chapter)
 
         val chapterPos = chapterList.indexOf(chapter)
@@ -435,7 +474,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val loader = loader ?: return
         try {
             logcat { "Preloading ${chapter.chapter.url}" }
-            loader.loadChapter(chapter)
+            loader.loadChapter(chapter, preload = true)
         } catch (e: Throwable) {
             if (e is CancellationException) {
                 throw e
@@ -462,8 +501,14 @@ class ReaderViewModel @JvmOverloads constructor(
             return
         }
 
+        mutableState.update { it.copy(selectedPage = page) }
+
         val selectedChapter = page.chapter
         val pages = selectedChapter.pages ?: return
+        getCurrentChapter()?.takeIf { it !== selectedChapter }?.let {
+            (it.pageLoader as? HttpPageLoader)?.stopPreloading()
+        }
+        (selectedChapter.pageLoader as? HttpPageLoader)?.preloadPages(pages, page.index)
 
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {
@@ -796,6 +841,74 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.Loading) }
     }
 
+    fun showSourcePausedDialog(page: ReaderPage? = null, onlyWhenNoDialog: Boolean = false): Boolean {
+        if (page != null && !page.errorFlow.value.isSourceAccessError()) return false
+        val source = manga?.source ?: return false
+        val restriction = sourceRequests.mangaRestriction(source) ?: return false
+        val updated = mutableState.updateAndGet {
+            if (onlyWhenNoDialog && (it.dialog != null || it.selectedPage !== page)) {
+                it
+            } else {
+                it.copy(dialog = Dialog.SourcePaused(restriction, page))
+            }
+        }
+        return updated.dialog == Dialog.SourcePaused(restriction, page)
+    }
+
+    fun retryPage(page: ReaderPage) {
+        if (!showSourcePausedDialog(page)) page.chapter.pageLoader?.retryPage(page)
+    }
+
+    fun retrySourceFromReader() {
+        val dialog = state.value.dialog as? Dialog.SourcePaused ?: return
+        val manga = manga ?: return
+        val loader = loader ?: return
+        val page = dialog.page
+        if (page != null && page.chapter.pageLoader?.isRecycled != false) {
+            closeDialog()
+            return
+        }
+        val restriction = sourceRequests.mangaRestriction(manga.source) ?: dialog.restriction
+        if (!restriction.canRetry(System.currentTimeMillis())) {
+            showSourcePausedDialog(page)
+            return
+        }
+        mutableState.update { it.copy(dialog = Dialog.Loading) }
+        viewModelScope.launchIO {
+            try {
+                if (!sourceRequests.resumeForbidden(LibraryUpdateType.MANGA, manga.source)) {
+                    if (!showSourcePausedDialog(page)) {
+                        reportSourceRetryError(
+                            SourceRequestPausedException(
+                                sourceRequests.deadline(LibraryUpdateType.MANGA, manga.source),
+                            ),
+                            page,
+                        )
+                    }
+                    return@launchIO
+                }
+                if (page == null) {
+                    loadChapter(loader, chapterList.first { chapterId == it.chapter.id })
+                } else {
+                    page.chapter.pageLoader?.retryPage(page)
+                }
+                closeDialog()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                reportSourceRetryError(error, page)
+            }
+        }
+    }
+
+    private suspend fun reportSourceRetryError(error: Throwable, page: ReaderPage?) {
+        if (page == null) {
+            eventChannel.send(Event.InitialChapterError(error))
+        } else if (!showSourcePausedDialog(page)) {
+            closeDialog()
+            eventChannel.send(Event.PageError(error))
+        }
+    }
+
     fun openReadingModeSelectDialog() {
         mutableState.update { it.copy(dialog = Dialog.ReadingModeSelect) }
     }
@@ -983,6 +1096,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val bookmarked: Boolean = false,
         val isLoadingAdjacentChapter: Boolean = false,
         val currentPage: Int = -1,
+        val selectedPage: ReaderPage? = null,
 
         /**
          * Viewer used to display the pages (pager, webtoon, ...).
@@ -1001,6 +1115,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     sealed interface Dialog {
         data object Loading : Dialog
+        data class SourcePaused(val restriction: SourceAccessRestriction, val page: ReaderPage? = null) : Dialog
         data object Settings : Dialog
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
@@ -1008,6 +1123,8 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     sealed interface Event {
+        data class InitialChapterError(val error: Throwable) : Event
+        data class PageError(val error: Throwable) : Event
         data object ReloadViewerChapters : Event
         data object PageChanged : Event
         data class SetOrientation(val orientation: Int) : Event

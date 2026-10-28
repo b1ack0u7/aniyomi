@@ -42,6 +42,16 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Fixed
 
+- Prevent canceled reader preload plans and evicted cache entries from bypassing transfer admission, and show source access warnings for visible image failures even when the page list is cached
+
+- Show shared HTTP 429, HTTP 403 and combined source warnings in manga information and the reader, with a live countdown and explicit retry that preserves access-denied pauses until confirmed after the wait
+
+- Allow explicitly resuming an HTTP 403 source pause from the manga reader with an empty download queue, keeping other source pauses and timed cooldowns intact
+
+- Bound manga reader preloading, preserve active transfers across page changes and require explicit retries for failed pages; coordinate manga and anime source suggestion searches and stop remaining queries after access denial or rate limiting
+
+- Pause manga source requests after HTTP 403 until downloads are manually resumed, stop image retries and queued chapters even without smart pacing, and share reader/download HTTP 429 cooldowns without slowing normal reader requests
+
 - Keep library filters and other adaptive dialogs fully visible around system bars and display cutouts in anime and manga
 
 - Draw static webtoon pages in bounded immutable strips, release large pages offscreen and reload safely without replacing the existing reader or its SSIV fallback; adapted from Mihon [b5856135c](https://github.com/mihonapp/mihon/commit/b5856135c)

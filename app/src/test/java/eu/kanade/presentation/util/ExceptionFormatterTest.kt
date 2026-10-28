@@ -36,6 +36,9 @@ class ExceptionFormatterTest {
         every { context.stringResource(MR.strings.exception_offline) } returns "Offline"
         every { context.stringResource(MR.strings.exception_unknown_host, "example.com") } returns "DNS: example.com"
         every { context.stringResource(MR.strings.exception_http, 429) } returns "HTTP 429"
+        every { context.stringResource(AYMR.strings.source_rate_limited_error) } returns "Too many requests (HTTP 429)"
+        every { context.stringResource(AYMR.strings.source_access_denied_error) } returns
+            "Access denied; possible IP block"
         every { context.stringResource(MR.strings.no_results_found) } returns "No results"
     }
 
@@ -55,6 +58,15 @@ class ExceptionFormatterTest {
     @Test
     fun `source paused by cloudflare retains the challenge diagnostic`() {
         assertEquals("Cloudflare challenge", format(IOException("wrapper", SourceRequestPausedException())))
+    }
+
+    @Test
+    fun `source paused after access denial has its own diagnostic without mentioning downloads`() {
+        every { context.stringResource(AYMR.strings.source_access_denied_error) } returns "Source paused after 403"
+
+        val error = IOException("wrapper", SourceRequestPausedException(forbidden = true))
+
+        assertEquals("Source paused after 403", format(error))
     }
 
     @Test
@@ -89,10 +101,41 @@ class ExceptionFormatterTest {
     }
 
     @Test
-    fun `wrapped HTTP errors retain their status code`() {
+    fun `wrapped rate limit explains why requests are paused`() {
         val error = IOException("wrapper", HttpException(429))
 
-        assertEquals("HTTP 429", format(error))
+        assertEquals("Too many requests (HTTP 429)", format(error))
+    }
+
+    @Test
+    fun `access denial mentions a possible block without claiming it is confirmed`() {
+        assertEquals("Access denied; possible IP block", format(IOException("wrapper", HttpException(403))))
+    }
+
+    @Test
+    fun `persisted rate limit distinguishes its deadline from other temporary failures`() {
+        val retryAt = 1_800_000_000_000L
+        val date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(retryAt))
+        every { context.stringResource(AYMR.strings.source_rate_limited_until, date) } returns
+            "Rate limited until $date"
+
+        assertEquals(
+            "Rate limited until $date",
+            format(SourceRequestPausedException(retryAt, rateLimited = true)),
+        )
+    }
+
+    @Test
+    fun `combined access denial reports the rate limit deadline without claiming a confirmed block`() {
+        val retryAt = System.currentTimeMillis() + 600_000
+        val date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(retryAt))
+        every { context.stringResource(AYMR.strings.source_access_denied_rate_limited_until, date) } returns
+            "Access denied; possible IP block; wait until $date"
+
+        assertEquals(
+            "Access denied; possible IP block; wait until $date",
+            format(SourceRequestPausedException(retryAt, forbidden = true, rateLimited = true)),
+        )
     }
 
     @Test

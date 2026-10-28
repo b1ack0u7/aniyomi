@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.download.manga
 import android.content.SharedPreferences
 import eu.kanade.tachiyomi.network.CloudflareChallengeException
 import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.SourceRequestPausedException
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -111,7 +112,6 @@ class MangaDownloadLimiterTest {
         val limiter = fixture.limiter()
 
         listOf(
-            HttpException(403),
             HttpException(404),
             IOException("Disk full"),
             IllegalArgumentException("Invalid page"),
@@ -134,18 +134,76 @@ class MangaDownloadLimiterTest {
     }
 
     @Test
-    fun `disabled smart downloads ignore stored cooldowns and challenges`() {
+    fun `disabled smart pacing preserves source cooldowns and manual pauses`() {
         val fixture = Fixture()
         val limiter = fixture.limiter()
         limiter.defer(1, HttpException(429))
         limiter.defer(1, CloudflareChallengeException("Challenge"))
 
         fixture.enabled = false
-        limiter.ready(1) shouldBe true
-        limiter.defer(1, HttpException(429)) shouldBe false
+        limiter.ready(1) shouldBe false
         val persisted = fixture.values.toMap()
         limiter.completed(1)
         fixture.values shouldBe persisted
+    }
+
+    @Test
+    fun `forbidden source stops the next page and chapter in either pacing mode until manual resume`() = runTest {
+        listOf(true, false).forEach { enabled ->
+            val fixture = Fixture().apply { this.enabled = enabled }
+            val limiter = fixture.limiter()
+            var requests = 0
+            limiter.beforeRequest(1)
+            requests++
+            limiter.defer(1, HttpException(403)) shouldBe true
+            fixture.now += 86_400_000
+            val restored = fixture.limiter()
+
+            repeat(2) {
+                runCatching {
+                    restored.beforeRequest(1)
+                    requests++
+                }.exceptionOrNull()
+                    .let { (it is SourceDownloadWaiting) shouldBe true }
+            }
+            requests shouldBe 1
+            restored.forbidden(1) shouldBe true
+            restored.ready(2) shouldBe true
+            fixture.values["until_1"] = fixture.now + 10_000
+            restored.resumeChallenges()
+            restored.forbidden(1) shouldBe false
+            restored.ready(1) shouldBe false
+            fixture.now += 10_000
+            restored.ready(1) shouldBe true
+        }
+    }
+
+    @Test
+    fun `image retry never repeats forbidden rate limited challenged or locally paused requests`() {
+        val fixture = Fixture().apply { enabled = false }
+        val limiter = fixture.limiter()
+        listOf(
+            HttpException(403),
+            HttpException(429),
+            SourceDownloadWaiting(),
+            SourceRequestPausedException(),
+            CloudflareChallengeException("Challenge"),
+            IOException("Wrapped", HttpException(403)),
+        ).forEach { error ->
+            limiter.canRetryImage(error, 0) shouldBe false
+        }
+        limiter.canRetryImage(IOException("Read failed"), 0) shouldBe true
+        limiter.canRetryImage(IOException("Read failed"), 3) shouldBe false
+    }
+
+    @Test
+    fun `disabled smart pacing still honors retry after and blocks new network operations`() = runTest {
+        val fixture = Fixture().apply { enabled = false }
+        val limiter = fixture.limiter()
+        limiter.defer(1, HttpException(429, "600")) shouldBe true
+        limiter.deadline(1) shouldBe fixture.now + 600_000
+        (runCatching { limiter.beforeRequest(1) }.exceptionOrNull() is SourceDownloadWaiting) shouldBe true
+        limiter.ready(1) shouldBe false
     }
 
     @Test

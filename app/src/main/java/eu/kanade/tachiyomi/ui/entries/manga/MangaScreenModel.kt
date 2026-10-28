@@ -36,6 +36,7 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCache
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
 import eu.kanade.tachiyomi.data.suggestions.SuggestionState
@@ -45,8 +46,11 @@ import eu.kanade.tachiyomi.data.suggestions.toSuggestionSeed
 import eu.kanade.tachiyomi.data.track.EnhancedMangaTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.SourceAccessRestriction
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.MangaSource
+import eu.kanade.tachiyomi.source.manga.isLocalOrStub
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
@@ -134,6 +138,7 @@ class MangaScreenModel(
     private val sourcePreferences: SourcePreferences = Injekt.get(),
     private val suggestionCoordinator: SuggestionCoordinator = Injekt.get(),
     private val searchFallbackEngine: MangaSearchFallbackEngine = Injekt.get(),
+    private val sourceRequests: SourceRequestCoordinator = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -250,7 +255,16 @@ class MangaScreenModel(
                     excludedScanlators = getExcludedScanlators.await(mangaId),
                     isRefreshingData = needRefreshInfo || needRefreshChapter,
                     dialog = null,
+                    sourceRestriction = sourceRequests.mangaRestriction(manga.source),
                 )
+            }
+
+            screenModelScope.launchIO {
+                sourceRequests.observeMangaRestriction(manga.source)
+                    .flowWithLifecycle(lifecycle)
+                    .collectLatest { restriction ->
+                        updateSuccessState { it.copy(sourceRestriction = restriction) }
+                    }
             }
 
             // Start observe tracking since it only needs mangaId
@@ -373,14 +387,39 @@ class MangaScreenModel(
     // Similar titles - end
 
     fun fetchAllFromSource(manualFetch: Boolean = true) {
+        if (successState?.isRefreshingData != false) return
+        updateSuccessState { it.copy(isRefreshingData = true) }
         screenModelScope.launch {
-            updateSuccessState { it.copy(isRefreshingData = true) }
-            fetchAllFromSource(
-                manualFetch = manualFetch,
-                fetchDetails = true,
-                fetchChapters = true,
-            )
-            updateSuccessState { it.copy(isRefreshingData = false) }
+            try {
+                fetchAllFromSource(
+                    manualFetch = manualFetch,
+                    fetchDetails = true,
+                    fetchChapters = true,
+                )
+            } finally {
+                updateSuccessState { it.copy(isRefreshingData = false) }
+            }
+        }
+    }
+
+    fun retrySource() {
+        val state = successState ?: return
+        if (state.isRefreshingData) return
+        val restriction = sourceRequests.mangaRestriction(state.manga.source) ?: return
+        if (!restriction.canRetry(System.currentTimeMillis())) return
+        updateSuccessState { it.copy(isRefreshingData = true) }
+        screenModelScope.launch {
+            try {
+                if (!sourceRequests.resumeForbidden(LibraryUpdateType.MANGA, state.manga.source)) return@launch
+                fetchAllFromSource(
+                    manualFetch = true,
+                    fetchDetails = false,
+                    fetchChapters = true,
+                    downloadNew = false,
+                )
+            } finally {
+                updateSuccessState { it.copy(isRefreshingData = false) }
+            }
         }
     }
 
@@ -396,16 +435,24 @@ class MangaScreenModel(
         manualFetch: Boolean,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
+        downloadNew: Boolean = true,
     ) {
         val state = successState ?: return
         try {
             withIOContext {
-                val update = state.source.getMangaUpdate(
-                    manga = state.manga.toSManga(),
-                    chapters = state.chapters.map { it.chapter.toSChapter() },
-                    fetchDetails = fetchDetails,
-                    fetchChapters = fetchChapters,
-                )
+                val fetch = suspend {
+                    state.source.getMangaUpdate(
+                        manga = state.manga.toSManga(),
+                        chapters = state.chapters.map { it.chapter.toSChapter() },
+                        fetchDetails = fetchDetails,
+                        fetchChapters = fetchChapters,
+                    )
+                }
+                val update = if (state.source.isLocalOrStub()) {
+                    fetch()
+                } else {
+                    sourceRequests.withRequest(LibraryUpdateType.MANGA, state.manga.source, fetch)
+                }
 
                 if (fetchDetails) {
                     updateManga.awaitUpdateFromSource(state.manga, update.manga, manualFetch)
@@ -419,12 +466,13 @@ class MangaScreenModel(
                         manualFetch,
                     )
 
-                    if (manualFetch) {
+                    if (manualFetch && downloadNew) {
                         downloadNewChapters(newChapters)
                     }
                 }
             }
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             // Ignore early hints "errors" that aren't handled by OkHttp
             if (e is HttpException && e.code == 103) return
 
@@ -1265,6 +1313,7 @@ class MangaScreenModel(
             val dialog: Dialog? = null,
             val hasPromptedToAddBefore: Boolean = false,
             val suggestions: SuggestionState = SuggestionState.Idle,
+            val sourceRestriction: SourceAccessRestriction? = null,
         ) : State {
             val processedChapters by lazy {
                 chapters.applyFilters(manga).toList()

@@ -45,6 +45,7 @@ import com.hippo.unifile.UniFile
 import dev.chrisbanes.insetter.applyInsetter
 import eu.kanade.core.util.ifMangaSourcesLoaded
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.presentation.components.SourceAccessWarningDialog
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
 import eu.kanade.presentation.reader.PageIndicatorText
@@ -53,6 +54,7 @@ import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
+import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -227,6 +229,8 @@ class ReaderActivity : BaseActivity() {
         viewModel.eventFlow
             .onEach { event ->
                 when (event) {
+                    is ReaderViewModel.Event.InitialChapterError -> setInitialChapterError(event.error)
+                    is ReaderViewModel.Event.PageError -> toast(event.error.formattedMessage)
                     ReaderViewModel.Event.ReloadViewerChapters -> {
                         viewModel.state.value.viewerChapters?.let(::setChapters)
                     }
@@ -446,6 +450,17 @@ class ReaderActivity : BaseActivity() {
 
             val onDismissRequest = viewModel::closeDialog
             when (state.dialog) {
+                is ReaderViewModel.Dialog.SourcePaused -> {
+                    SourceAccessWarningDialog(
+                        sourceName = viewModel.sourceName,
+                        restriction = (state.dialog as ReaderViewModel.Dialog.SourcePaused).restriction,
+                        onRetry = viewModel::retrySourceFromReader,
+                        onDismiss = {
+                            val dialog = state.dialog as ReaderViewModel.Dialog.SourcePaused
+                            if (dialog.page == null) finish() else viewModel.closeDialog()
+                        },
+                    )
+                }
                 is ReaderViewModel.Dialog.Loading -> {
                     AlertDialog(
                         onDismissRequest = {},
@@ -620,12 +635,20 @@ class ReaderActivity : BaseActivity() {
 
     /**
      * Called from the presenter if the initial load couldn't load the pages of the chapter. In
-     * this case the activity is closed and a toast is shown to the user.
+     * this case a source pause offers explicit recovery; other errors close the activity.
      */
     private fun setInitialChapterError(error: Throwable) {
         logcat(LogPriority.ERROR, error)
+        if (error.isSourceAccessError() && viewModel.showSourcePausedDialog()) {
+            loadingIndicator?.hide()
+            return
+        }
         finish()
-        toast(error.message)
+        toast(error.formattedMessage)
+    }
+
+    fun retryPage(page: ReaderPage) {
+        viewModel.retryPage(page)
     }
 
     /**
@@ -637,7 +660,9 @@ class ReaderActivity : BaseActivity() {
     private fun setProgressDialog(show: Boolean) {
         if (show) {
             viewModel.showLoadingDialog()
-        } else {
+        } else if (viewModel.state.value.dialog == ReaderViewModel.Dialog.Loading &&
+            viewModel.state.value.viewerChapters != null
+        ) {
             viewModel.closeDialog()
         }
     }

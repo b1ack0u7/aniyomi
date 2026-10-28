@@ -7,6 +7,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -17,38 +19,39 @@ internal class ReaderPageLoadScheduler(
     private val scope: CoroutineScope,
     private val sourceId: Long,
     private val canLoadAhead: () -> Boolean,
+    private val coordinator: ReaderPageLoadCoordinator = SourcePageLoadCoordinator.instance,
+    private val requiresNetwork: (ReaderPage) -> Boolean = { true },
+    private val loadCached: ((ReaderPage) -> Boolean)? = null,
     private val load: suspend (ReaderPage) -> Unit,
 ) {
     private val lock = Any()
-    private val downloads = mutableMapOf<Int, Job>()
+    private val downloads = mutableMapOf<Int, Load>()
     private val pendingLoads = mutableMapOf<Int, MutableSet<Job>>()
     private var planningJob: Job? = null
-    private val holders = mutableMapOf<Int, Int>()
+    private var plan: Plan? = null
+    private var focusedIndex: Int? = null
     private var plannedIndices: Set<Int> = emptySet()
 
     suspend fun loadPage(pages: List<ReaderPage>, index: Int) {
         if (index !in pages.indices) return
-        synchronized(lock) { holders[index] = holders.getOrDefault(index, 0) + 1 }
-        try {
-            schedule(pages, index)
-            awaitCancellation()
-        } finally {
-            synchronized(lock) {
-                val remaining = holders.getValue(index) - 1
-                if (remaining > 0) {
-                    holders[index] = remaining
-                } else {
-                    holders.remove(index)
-                    if (index !in plannedIndices) downloads[index]?.cancel()
-                }
-            }
+        synchronized(lock) {
+            focusedIndex?.let { schedule(pages, it) }
         }
+        awaitCancellation()
     }
 
-    fun schedule(pages: List<ReaderPage>, index: Int, initial: Boolean = false) {
+    fun schedule(pages: List<ReaderPage>, index: Int) {
         if (index !in pages.indices) return
         synchronized(lock) {
-            launchOnce(pages[index])
+            focusedIndex = index
+            val nextPlan = Plan(pages, index, canLoadAhead())
+            if (plan != nextPlan) {
+                downloads.filter { (page, request) -> page != index && !request.started }
+                    .values.forEach { it.job.cancel() }
+            }
+            launchOnce(pages[index], foreground = true)
+            if (plan == nextPlan && planningJob?.isActive == true) return
+            plan = nextPlan
             val ordered = buildList {
                 add(pages[index])
                 pages.getOrNull(index - 1)?.let(::add)
@@ -56,19 +59,21 @@ internal class ReaderPageLoadScheduler(
                 addAll(pages.drop(index + 2))
                 addAll(pages.take((index - 1).coerceAtLeast(0)).asReversed())
             }
-            val permitted = if (canLoadAhead()) ordered else ordered.filter { it.index in (index - 1)..(index + 4) }
-            val chunks = permitted.rollingChunks(if (initial) 1 else 3, if (initial) 1 else 5)
-            plannedIndices = chunks.take(2).flatten().mapTo(HashSet()) { it.index }
-            downloads.filterKeys { it !in plannedIndices && it !in holders }.values.forEach { it.cancel() }
+            val permitted = if (nextPlan.loadAhead) ordered else ordered.filter { it.index in (index - 1)..(index + 4) }
+            plannedIndices = permitted.mapTo(HashSet()) { it.index }
+            // Let an admitted transfer finish; only discard work that has not reached the network.
+            downloads.filter { (page, request) -> page !in plannedIndices && !request.started }
+                .values.forEach { it.job.cancel() }
             planningJob?.cancel()
             planningJob = scope.launch {
-                for (chunk in chunks) {
-                    val jobs = synchronized(lock) {
-                        val loadAhead = canLoadAhead()
-                        chunk.filter { loadAhead || it.index in (index - 1)..(index + 4) }
-                            .mapNotNull(::launchOnce)
+                for (page in permitted) {
+                    if (!canLoadAhead() && page.index !in (index - 1)..(index + 4)) continue
+                    val job = synchronized(lock) {
+                        coroutineContext.ensureActive()
+                        if (plan !== nextPlan) return@launch
+                        launchOnce(page, foreground = page.index == focusedIndex)
                     }
-                    jobs.joinAll()
+                    job?.join()
                 }
             }
         }
@@ -76,32 +81,63 @@ internal class ReaderPageLoadScheduler(
 
     fun retry(page: ReaderPage) {
         synchronized(lock) {
-            downloads[page.index]?.cancel()
-            launchOnce(page, retry = true)
+            downloads[page.index]?.job?.cancel()
+            page.status = Page.State.QUEUE
+            launchOnce(page, foreground = true, retry = true)
         }
     }
 
-    private fun launchOnce(page: ReaderPage, retry: Boolean = false): Job? {
+    fun deactivate() {
+        synchronized(lock) {
+            focusedIndex = null
+            plan = null
+            plannedIndices = emptySet()
+            planningJob?.cancel()
+            planningJob = null
+            downloads.values.filterNot { it.started }.forEach { it.job.cancel() }
+        }
+    }
+
+    private fun launchOnce(page: ReaderPage, foreground: Boolean, retry: Boolean = false): Job? {
         val previous = downloads[page.index]
-        if (!retry && previous != null && !previous.isCancelled && !previous.isCompleted) return previous
+        if (!retry && previous != null && !previous.job.isCancelled && !previous.job.isCompleted) {
+            if (!foreground || previous.foreground || previous.started) return previous.job
+            previous.job.cancel()
+        }
         val predecessors = pendingLoads[page.index].orEmpty().filterNot { it.isCompleted }
         if (!retry && predecessors.isEmpty() && page.status != Page.State.QUEUE) return null
+        val request = Load(foreground)
         val job = scope.launch(start = CoroutineStart.LAZY) {
-            // Include older requests when a cancelled replacement was still waiting for their cleanup.
             predecessors.joinAll()
             try {
-                SourcePageLoadCoordinator.withPermit(sourceId) { load(page) }
+                coroutineContext.ensureActive()
+                val network = requiresNetwork(page)
+                // A cache hit can disappear before loading; a miss still needs network admission.
+                if (!network && loadCached?.invoke(page) == true) return@launch
+                val begin = {
+                    synchronized(lock) {
+                        coroutineContext.ensureActive()
+                        request.started = true
+                    }
+                }
+                if (network || loadCached != null) {
+                    coordinator.withPermit(sourceId, foreground, begin) { load(page) }
+                } else {
+                    begin()
+                    load(page)
+                }
             } catch (e: CancellationException) {
                 page.stream = null
                 page.status = Page.State.QUEUE
                 throw e
             }
         }
-        downloads[page.index] = job
+        request.job = job
+        downloads[page.index] = request
         pendingLoads.getOrPut(page.index) { mutableSetOf() }.add(job)
         job.invokeOnCompletion {
             synchronized(lock) {
-                if (downloads[page.index] === job) downloads.remove(page.index)
+                if (downloads[page.index] === request) downloads.remove(page.index)
                 pendingLoads[page.index]?.let { pending ->
                     pending.remove(job)
                     if (pending.isEmpty()) pendingLoads.remove(page.index)
@@ -111,23 +147,74 @@ internal class ReaderPageLoadScheduler(
         job.start()
         return job
     }
+
+    private data class Plan(val pages: List<ReaderPage>, val index: Int, val loadAhead: Boolean)
+
+    private class Load(val foreground: Boolean) {
+        lateinit var job: Job
+        var started = false
+    }
 }
 
 internal object SourcePageLoadCoordinator {
-    private val permits = ConcurrentHashMap<Long, Semaphore>()
-
-    suspend fun <T> withPermit(sourceId: Long, block: suspend () -> T): T =
-        permits.getOrPut(sourceId) { Semaphore(5) }.withPermit { block() }
+    val instance = ReaderPageLoadCoordinator()
 }
 
-private fun <T> List<T>.rollingChunks(startSize: Int, endSize: Int): List<List<T>> {
-    val chunks = mutableListOf<List<T>>()
-    var index = 0
-    var size = startSize
-    while (index < this.size) {
-        chunks += subList(index, (index + size).coerceAtMost(this.size))
-        index += size
-        size = (size + 1).coerceAtMost(endSize)
+internal class ReaderPageLoadCoordinator(
+    private val now: () -> Long = { System.nanoTime() / 1_000_000 },
+) {
+    private val sources = ConcurrentHashMap<Long, Source>()
+
+    suspend fun <T> withPermit(
+        sourceId: Long,
+        foreground: Boolean,
+        onStart: () -> Unit = {},
+        block: suspend () -> T,
+    ): T {
+        val source = sources.getOrPut(sourceId) { Source() }
+        if (foreground) {
+            return source.transfers.withPermit {
+                synchronized(source) { source.lastStart = now() }
+                onStart()
+                block()
+            }
+        }
+        return source.preloads.withPermit {
+            while (true) {
+                val wait = synchronized(source) { source.lastStart?.let { it + PRELOAD_INTERVAL_MS - now() } ?: 0L }
+                if (wait > 0) delay(wait)
+                source.transfers.acquire()
+                val admitted = synchronized(source) {
+                    if (source.lastStart?.let { now() - it >= PRELOAD_INTERVAL_MS } != false) {
+                        source.lastStart = now()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!admitted) {
+                    source.transfers.release()
+                    continue
+                }
+                try {
+                    onStart()
+                    return@withPermit block()
+                } finally {
+                    source.transfers.release()
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("Unreachable")
+        }
     }
-    return chunks
+
+    private class Source {
+        val transfers = Semaphore(2)
+        val preloads = Semaphore(1)
+        var lastStart: Long? = null
+    }
+
+    private companion object {
+        const val PRELOAD_INTERVAL_MS = 1_000L
+    }
 }

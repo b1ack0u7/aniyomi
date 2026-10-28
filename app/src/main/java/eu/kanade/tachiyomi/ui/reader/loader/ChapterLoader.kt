@@ -37,7 +37,7 @@ class ChapterLoader(
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
      */
-    suspend fun loadChapter(chapter: ReaderChapter) {
+    suspend fun loadChapter(chapter: ReaderChapter, preload: Boolean = false) {
         if (chapterIsReady(chapter)) {
             return
         }
@@ -62,7 +62,7 @@ class ChapterLoader(
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
-                if (loader is HttpPageLoader) loader.preloadPages(pages, chapter.requestedPage)
+                if (!preload && loader is HttpPageLoader) loader.preloadPages(pages, chapter.requestedPage)
             } catch (e: Throwable) {
                 chapter.state = ReaderChapter.State.Error(e)
                 throw e

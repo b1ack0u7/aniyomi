@@ -166,6 +166,7 @@ class MangaScreen(
             onRetrySuggestions = screenModel::retrySuggestions,
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
+            onRetrySource = screenModel::retrySource,
             onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
             onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
             onCoverClicked = screenModel::showCoverDialog,

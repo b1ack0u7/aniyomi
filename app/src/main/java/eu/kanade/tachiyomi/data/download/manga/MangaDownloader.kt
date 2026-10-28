@@ -14,9 +14,8 @@ import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
-import eu.kanade.tachiyomi.network.CloudflareChallengeException
-import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.SourceRequestCoordinator
+import eu.kanade.tachiyomi.network.requireSourceSuccess
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -292,6 +291,7 @@ class MangaDownloader(
     }
 
     private fun waitingMessage(source: Long): String? = when {
+        limiter.forbidden(source) -> context.stringResource(AYMR.strings.smart_download_forbidden)
         limiter.blocked(source) -> context.stringResource(AYMR.strings.smart_download_challenge)
         limiter.deadline(source) > System.currentTimeMillis() -> context.stringResource(
             AYMR.strings.smart_download_waiting,
@@ -570,7 +570,12 @@ class MangaDownloader(
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             if (deferDownload(download, error)) {
-                if (limiter.blocked(download.source.id)) notifier.onSourceChallenge(download)
+                when {
+                    limiter.forbidden(download.source.id) -> notifier.onWarning(
+                        context.stringResource(AYMR.strings.smart_download_forbidden),
+                    )
+                    limiter.blocked(download.source.id) -> notifier.onSourceChallenge(download)
+                }
                 return
             }
             // If the page list threw, it will resume here
@@ -654,17 +659,8 @@ class MangaDownloader(
         page.status = Page.State.DOWNLOAD_IMAGE
         page.progress = 0
         return flow {
-            val response = sourceRequest(source.id) { source.getImage(page, dataSaver) }
-            if (response.header("cf-mitigated") == "challenge") {
-                response.close()
-                throw CloudflareChallengeException(
-                    context.stringResource(MR.strings.information_cloudflare_bypass_failure),
-                )
-            }
-            if (!response.isSuccessful) {
-                val error = HttpException(response.code, response.header("Retry-After"))
-                response.close()
-                throw error
+            val response = sourceRequest(source.id) {
+                source.getImage(page, dataSaver).requireSourceSuccess()
             }
             val file = tmpDir.createFile("$filename.tmp")!!
             try {
@@ -691,16 +687,12 @@ class MangaDownloader(
             }
             emit(file)
         }
-            // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
+            // Source pauses must reach the queue without retrying this image.
             .retryWhen { error, attempt ->
                 if (error is CancellationException) throw error
-                if (limiter.enabled) throw error
-                if (attempt < 3) {
-                    delay((2L shl attempt.toInt()) * 1000)
-                    true
-                } else {
-                    false
-                }
+                val retry = limiter.canRetryImage(error, attempt)
+                if (retry) delay((2L shl attempt.toInt()) * 1000)
+                retry
             }
             .flowOn(Dispatchers.IO)
             .first()

@@ -70,6 +70,7 @@ import eu.kanade.presentation.entries.manga.components.ExpandableMangaDescriptio
 import eu.kanade.presentation.entries.manga.components.MangaActionRow
 import eu.kanade.presentation.entries.manga.components.MangaChapterListItem
 import eu.kanade.presentation.entries.manga.components.MangaInfoBox
+import eu.kanade.presentation.entries.manga.components.MangaSourceWarning
 import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
@@ -125,6 +126,7 @@ fun MangaScreen(
 
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
+    onRetrySource: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
 
@@ -186,6 +188,7 @@ fun MangaScreen(
             onRetrySuggestions = onRetrySuggestions,
             onFilterClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
+            onRetrySource = onRetrySource,
             onContinueReading = onContinueReading,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
@@ -226,6 +229,7 @@ fun MangaScreen(
             onRetrySuggestions = onRetrySuggestions,
             onFilterButtonClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
+            onRetrySource = onRetrySource,
             onContinueReading = onContinueReading,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
@@ -274,6 +278,7 @@ private fun MangaScreenSmallImpl(
 
     onFilterClicked: () -> Unit,
     onRefresh: () -> Unit,
+    onRetrySource: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
 
@@ -476,6 +481,12 @@ private fun MangaScreenSmallImpl(
                         key = EntryScreenItem.DESCRIPTION_WITH_TAG,
                         contentType = EntryScreenItem.DESCRIPTION_WITH_TAG,
                     ) {
+                        MangaSourceWarning(
+                            sourceName = state.source.name,
+                            restriction = state.sourceRestriction,
+                            isRetrying = state.isRefreshingData,
+                            onRetry = onRetrySource,
+                        )
                         ExpandableMangaDescription(
                             defaultExpandState = state.isFromSource,
                             description = state.manga.description,
@@ -569,6 +580,7 @@ fun MangaScreenLargeImpl(
 
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
+    onRetrySource: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
 
@@ -752,6 +764,12 @@ fun MangaScreenLargeImpl(
                             onTrackingClicked = onTrackingClicked,
                             onEditIntervalClicked = onEditIntervalClicked,
                             onEditCategory = onEditCategoryClicked,
+                        )
+                        MangaSourceWarning(
+                            sourceName = state.source.name,
+                            restriction = state.sourceRestriction,
+                            isRetrying = state.isRefreshingData,
+                            onRetry = onRetrySource,
                         )
                         ExpandableMangaDescription(
                             defaultExpandState = true,

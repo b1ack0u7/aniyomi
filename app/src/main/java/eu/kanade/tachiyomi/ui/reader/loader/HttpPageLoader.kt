@@ -5,6 +5,8 @@ import aniyomi.util.DataSaver.Companion.getImage
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.manga.toDomainChapter
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
+import eu.kanade.tachiyomi.network.requireSourceSuccess
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -30,11 +32,19 @@ internal class HttpPageLoader(
     private val sourcePreferences: SourcePreferences = Injekt.get(),
     // SY <--
     private val canLoadAhead: () -> Boolean = { false },
+    private val sourceRequests: SourceRequestCoordinator = Injekt.get(),
 ) : PageLoader() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val scheduler = ReaderPageLoadScheduler(scope, source.id, canLoadAhead, ::internalLoadPage)
+    private val scheduler = ReaderPageLoadScheduler(
+        scope,
+        source.id,
+        canLoadAhead,
+        requiresNetwork = { page -> page.imageUrl?.let { !chapterCache.isImageInCache(it) } ?: true },
+        loadCached = ::loadCachedPage,
+        load = ::internalLoadPage,
+    )
 
     // SY -->
     private val dataSaver = DataSaver(source, sourcePreferences)
@@ -53,7 +63,7 @@ internal class HttpPageLoader(
             if (e is CancellationException) {
                 throw e
             }
-            source.getPageList(chapter.chapter)
+            sourceRequests.withReaderRequest(source.id) { source.getPageList(chapter.chapter) }
         }
         return pages.mapIndexed { index, page ->
             // Don't trust sources and use our own indexing
@@ -77,16 +87,15 @@ internal class HttpPageLoader(
             page.status = Page.State.QUEUE
         }
 
-        // Automatically retry failed pages when subscribed to this page
-        if (page.status == Page.State.ERROR) {
-            page.status = Page.State.QUEUE
-        }
-
         scheduler.loadPage(page.chapter.pages.orEmpty(), page.index)
     }
 
     fun preloadPages(pages: List<ReaderPage>, index: Int) {
-        scheduler.schedule(pages, index.coerceIn(pages.indices), initial = true)
+        scheduler.schedule(pages, index.coerceIn(pages.indices))
+    }
+
+    fun stopPreloading() {
+        scheduler.deactivate()
     }
 
     override fun retryPage(page: ReaderPage) {
@@ -116,6 +125,20 @@ internal class HttpPageLoader(
         }
     }
 
+    private fun loadCachedPage(page: ReaderPage): Boolean {
+        val imageUrl = page.imageUrl ?: return false
+        try {
+            if (!chapterCache.isImageInCache(imageUrl)) return false
+            page.errorFlow.value = null
+            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+            page.status = Page.State.READY
+            return true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return false
+        }
+    }
+
     /**
      * Loads the page, retrieving the image URL and downloading the image if necessary.
      * Downloaded images are stored in the chapter cache.
@@ -123,16 +146,19 @@ internal class HttpPageLoader(
      * @param page the page whose source image has to be downloaded.
      */
     private suspend fun internalLoadPage(page: ReaderPage) {
+        page.errorFlow.value = null
         try {
             if (page.imageUrl.isNullOrEmpty()) {
                 page.status = Page.State.LOAD_PAGE
-                page.imageUrl = source.getImageUrl(page)
+                page.imageUrl = sourceRequests.withReaderRequest(source.id) { source.getImageUrl(page) }
             }
             val imageUrl = page.imageUrl!!
 
             if (!chapterCache.isImageInCache(imageUrl)) {
                 page.status = Page.State.DOWNLOAD_IMAGE
-                val imageResponse = source.getImage(page, dataSaver)
+                val imageResponse = sourceRequests.withReaderRequest(source.id) {
+                    source.getImage(page, dataSaver).requireSourceSuccess()
+                }
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
@@ -143,6 +169,7 @@ internal class HttpPageLoader(
             if (e is CancellationException) {
                 throw e
             }
+            page.errorFlow.value = e
             page.status = Page.State.ERROR
         }
     }

@@ -1,5 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="source_rate_limited_code">HTTP 429 · Too many requests</string>
+    <string name="source_rate_limited_ready_summary">%1$s reported too many requests. The wait has ended and you can check whether the source allows access again.</string>
+    <string name="source_access_denied_code">HTTP 403 · Possible IP block</string>
+    <string name="source_access_denied_rate_limited_title">Access denied and waiting</string>
+    <string name="source_access_denied_rate_limited_code">HTTP 403 + HTTP 429</string>
+    <string name="source_access_denied_rate_limited_finished_code">HTTP 403 · HTTP 429 wait has ended</string>
+    <string name="source_access_denied_rate_limited_summary">%1$s denied access and also reported too many requests. Your IP may have been blocked. New requests for this source are paused.</string>
+    <string name="source_access_denied_wait_finished">The wait has ended. Access remains paused after HTTP 403 until you confirm another attempt.</string>
+    <string name="source_access_denied_rate_limited_until">The source denied access (HTTP 403) and your IP may have been blocked. It also reported too many requests (HTTP 429). Wait until %1$s before trying again.</string>
+    <string name="source_cached_content_available">You can continue reading downloaded or cached content.</string>
+    <string name="source_action_back">Back</string>
+    <string name="action_retry_source">Try again</string>
+    <string name="source_rate_limited_title">Source temporarily paused</string>
+    <string name="source_rate_limited_summary">%1$s has limited requests. New online reading and download requests for all manga from this source are paused.</string>
+    <string name="source_rate_limited_countdown">You can try again in %1$s.</string>
+    <string name="source_rate_limited_ready">The wait has ended. You can try again.</string>
+    <string name="source_rate_limited_error">The source reported too many requests (HTTP 429). Wait before trying again.</string>
+    <string name="source_rate_limited_until">The source reported too many requests (HTTP 429). Wait until %1$s before trying again.</string>
+    <string name="source_access_denied_title">Access denied</string>
+    <string name="source_access_denied_summary">%1$s denied access. Your IP may have been blocked. New requests for all manga from this source remain paused until you decide to try again.</string>
+    <string name="source_access_denied_error">The source denied access (HTTP 403). Your IP may have been blocked.</string>
     <!-- Generic strings -->
     <string name="confirm_exit">Enable Horizontal Seek</string>
     <string name="action_filter_started">Started</string>
@@ -665,6 +686,7 @@
     <string name="smart_manga_downloads_info">Uses one image request at a time per source. Successful downloads gradually restore the normal pace after rate limiting. A server may request a longer wait than your maximum. Cloudflare challenges may require opening the source in WebView. These settings reduce request bursts but cannot guarantee that a source will not block downloads.</string>
     <string name="smart_download_waiting">Waiting for source · resumes after %1$s</string>
     <string name="smart_download_challenge">Source paused · open WebView to resolve Cloudflare, then resume downloads</string>
+    <string name="smart_download_forbidden">The source denied access (HTTP 403) and may have blocked your IP. Resume downloads manually only when ready to retry.</string>
     <string name="smart_download_retry">Source temporarily limited · resumes after %1$s</string>
     <string name="global_search_prompt">Enter a title to search your enabled sources.</string>
     <string name="global_search_no_pinned_sources">No pinned sources are enabled for search. Choose all sources or enable a pinned source.</string>
