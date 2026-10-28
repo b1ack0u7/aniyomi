@@ -1,5 +1,8 @@
 package eu.kanade.tachiyomi.data.suggestions
 
+import eu.kanade.tachiyomi.network.CloudflareChallengeException
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.SourceRequestPausedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -76,6 +79,9 @@ internal class SourceSearchFallback(
     private var authorAdded = 0
     private var genreAdded = 0
 
+    @Volatile
+    private var sourcePaused = false
+
     // Each pass gets its own quota so paginating doesn't stay stuck behind the caps the first
     // pass already spent.
     private fun resetPassQuotas() {
@@ -88,10 +94,11 @@ internal class SourceSearchFallback(
         private set
 
     private fun refreshHasNextPage() {
-        hasNextPage = results.size < boundedTotalLimit && cursors.any { it.hasNextPage }
+        hasNextPage = !sourcePaused && results.size < boundedTotalLimit && cursors.any { it.hasNextPage }
     }
 
     suspend fun loadInitial(onProgress: ((List<SuggestionItem>) -> Unit)? = null): List<SuggestionItem> {
+        if (sourcePaused) return lock.withLock { results.values.toList() }
         SuggestionCache.getSourceSearch(cacheKey)?.let { cached ->
             logcat { "[SearchFallback] CACHE HIT for '$entryTitle' (${cached.items.size} items)" }
             lock.withLock {
@@ -111,6 +118,7 @@ internal class SourceSearchFallback(
         var hadFailure = false
 
         for (tier in tiers) {
+            if (sourcePaused) break
             if (lock.withLock { results.size } >= boundedMaxResults) {
                 logcat { "[SearchFallback] Reached $boundedMaxResults results, skipping remaining tiers" }
                 break
@@ -122,7 +130,7 @@ internal class SourceSearchFallback(
                 cursors.filter { it.reason == tier.reason && it.query in tier.queries }.map { cursor ->
                     async {
                         searchPermits.withPermit {
-                            if (lock.withLock { results.size } >= boundedMaxResults) return@withPermit
+                            if (sourcePaused || lock.withLock { results.size } >= boundedMaxResults) return@withPermit
                             val page = fetchPage(cursor.query, cursor.nextPage)
                             if (page == null) {
                                 lock.withLock { hadFailure = true }
@@ -179,7 +187,7 @@ internal class SourceSearchFallback(
     // total limit is reached, or no cursor has a further page.
     private suspend fun fetchNextBatch(): Boolean {
         val batch = lock.withLock {
-            if (results.size >= boundedTotalLimit) return false
+            if (sourcePaused || results.size >= boundedTotalLimit) return false
             cursors.filter { it.hasNextPage }.take(MAX_PAGINATED_QUERIES)
         }
         if (batch.isEmpty()) return false
@@ -193,7 +201,7 @@ internal class SourceSearchFallback(
             batch.map { cursor ->
                 async {
                     searchPermits.withPermit {
-                        if (lock.withLock { results.size } >= boundedTotalLimit) return@withPermit
+                        if (sourcePaused || lock.withLock { results.size } >= boundedTotalLimit) return@withPermit
                         val page = fetchPage(cursor.query, cursor.nextPage)
                         if (page == null) {
                             lock.withLock { failedCursors += cursor }
@@ -211,7 +219,7 @@ internal class SourceSearchFallback(
             val failed = batch.filter { it in failedCursors }
             cursors.removeAll(failed.toSet())
             cursors.addAll(failed)
-            failed.isEmpty() && results.size == before && cursors.any { it.hasNextPage }
+            !sourcePaused && failed.isEmpty() && results.size == before && cursors.any { it.hasNextPage }
         }
     }
 
@@ -220,6 +228,16 @@ internal class SourceSearchFallback(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        val paused = generateSequence<Throwable>(e) { it.cause }.take(16).any {
+            it is SourceRequestPausedException ||
+                it is CloudflareChallengeException ||
+                it is HttpException &&
+                it.code in setOf(403, 429)
+        }
+        if (paused) {
+            sourcePaused = true
+            hasNextPage = false
+        }
         logcat { "[SearchFallback] query '$query' page $page failed: ${e.message}" }
         null
     }

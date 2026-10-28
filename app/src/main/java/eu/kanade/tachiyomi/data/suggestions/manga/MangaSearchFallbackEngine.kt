@@ -1,13 +1,21 @@
 package eu.kanade.tachiyomi.data.suggestions.manga
 
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.suggestions.SUGGESTION_SEARCH_LIMIT
 import eu.kanade.tachiyomi.data.suggestions.SourceSearchFallback
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionSeed
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.FilterList
 import tachiyomi.domain.entries.manga.model.Manga
+import tachiyomi.source.local.entries.manga.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
-class MangaSearchFallbackEngine {
+class MangaSearchFallbackEngine(
+    private val sourceRequests: SourceRequestCoordinator = Injekt.get(),
+) {
 
     internal fun createPager(
         manga: Manga,
@@ -16,7 +24,7 @@ class MangaSearchFallbackEngine {
         maxResults: Int = SUGGESTION_SEARCH_LIMIT,
         totalLimit: Int = maxResults,
     ): SourceSearchFallback {
-        val filterList = source.getFilterList()
+        var filterList: FilterList? = null
         return SourceSearchFallback(
             seed = seed,
             entryTitle = manga.title,
@@ -29,7 +37,19 @@ class MangaSearchFallbackEngine {
             maxResults = maxResults,
             totalLimit = totalLimit,
             search = { query, page ->
-                val result = source.getSearchManga(page, query, filterList)
+                val fetch = suspend {
+                    val filters = filterList ?: source.getFilterList().also { filterList = it }
+                    source.getSearchManga(page, query, filters)
+                }
+                val result = if (source.isLocal()) {
+                    fetch()
+                } else {
+                    sourceRequests.withRequest(
+                        LibraryUpdateType.MANGA,
+                        source.id,
+                        fetch,
+                    )
+                }
                 SourceSearchFallback.SearchPage(
                     candidates = result.mangas.map {
                         SourceSearchFallback.Candidate(

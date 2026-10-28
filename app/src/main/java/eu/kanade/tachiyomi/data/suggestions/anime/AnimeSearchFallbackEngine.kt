@@ -1,13 +1,21 @@
 package eu.kanade.tachiyomi.data.suggestions.anime
 
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.data.library.LibraryUpdateType
 import eu.kanade.tachiyomi.data.suggestions.SUGGESTION_SEARCH_LIMIT
 import eu.kanade.tachiyomi.data.suggestions.SourceSearchFallback
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionSeed
+import eu.kanade.tachiyomi.network.SourceRequestCoordinator
 import tachiyomi.domain.entries.anime.model.Anime
+import tachiyomi.source.local.entries.anime.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
-class AnimeSearchFallbackEngine {
+class AnimeSearchFallbackEngine(
+    private val sourceRequests: SourceRequestCoordinator = Injekt.get(),
+) {
 
     internal fun createPager(
         anime: Anime,
@@ -16,7 +24,7 @@ class AnimeSearchFallbackEngine {
         maxResults: Int = SUGGESTION_SEARCH_LIMIT,
         totalLimit: Int = maxResults,
     ): SourceSearchFallback {
-        val filterList = source.getFilterList()
+        var filterList: AnimeFilterList? = null
         return SourceSearchFallback(
             seed = seed,
             entryTitle = anime.title,
@@ -29,7 +37,19 @@ class AnimeSearchFallbackEngine {
             maxResults = maxResults,
             totalLimit = totalLimit,
             search = { query, page ->
-                val result = source.getSearchAnime(page, query, filterList)
+                val fetch = suspend {
+                    val filters = filterList ?: source.getFilterList().also { filterList = it }
+                    source.getSearchAnime(page, query, filters)
+                }
+                val result = if (source.isLocal()) {
+                    fetch()
+                } else {
+                    sourceRequests.withRequest(
+                        LibraryUpdateType.ANIME,
+                        source.id,
+                        fetch,
+                    )
+                }
                 SourceSearchFallback.SearchPage(
                     candidates = result.animes.map {
                         SourceSearchFallback.Candidate(

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.suggestions
 
+import eu.kanade.tachiyomi.network.HttpException
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CancellationException
@@ -243,6 +244,49 @@ class SourceSearchFallbackTest {
 
         val recovered = pager { _, _ -> page("seedling") }
         recovered.loadInitial().size shouldBe 1
+    }
+
+    @ParameterizedTest
+    @EnumSource(SuggestionMediaType::class)
+    fun `rate limit stops remaining tiers and automatic pagination while retaining partial results`(
+        mediaType: SuggestionMediaType,
+    ) = runTest {
+        val requests = mutableListOf<Pair<String, Int>>()
+        val seed = seed(mediaType)
+        val pager = pager(seed, author = "Creator", genres = listOf("Fantasy")) { query, number ->
+            requests += query to number
+            if (query == "Creator") throw HttpException(429, "600")
+            page(if (query == "seed") "seedling" else "genre result", hasNextPage = true)
+        }
+
+        pager.loadInitial().map { it.title } shouldContainExactly listOf("seedling")
+        pager.hasNextPage shouldBe false
+        pager.loadNextPage().map { it.title } shouldContainExactly listOf("seedling")
+        pager.loadInitial().map { it.title } shouldContainExactly listOf("seedling")
+        requests shouldContainExactly listOf("seed" to 1, "Creator" to 1)
+
+        val recovered = pager(seed, author = "Creator", genres = listOf("Fantasy")) { query, number ->
+            requests += query to number
+            page(if (query == "seed") "seedling" else "$query result")
+        }
+        recovered.loadInitial().size shouldBe 3
+        requests.count { it == ("seed" to 1) } shouldBe 2
+    }
+
+    @Test
+    fun `pagination access denial does not advance or repeat a rejected cursor`() = runTest {
+        val requests = mutableListOf<Int>()
+        val pager = pager { _, number ->
+            requests += number
+            if (number == 2) throw HttpException(403)
+            page("seedling", hasNextPage = true)
+        }
+        pager.loadInitial().size shouldBe 1
+
+        repeat(3) { pager.loadNextPage().size shouldBe 1 }
+
+        requests shouldContainExactly listOf(1, 2)
+        pager.hasNextPage shouldBe false
     }
 
     private fun seed(mediaType: SuggestionMediaType = SuggestionMediaType.MANGA) = SuggestionSeed(
