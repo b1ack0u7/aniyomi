@@ -15,6 +15,8 @@ interface MangaTrackRepository {
 
     suspend fun delete(mangaId: Long, trackerId: Long)
 
+    suspend fun updateIfSameIdentity(track: MangaTrack, expected: MangaTrack): Boolean
+
     suspend fun insertManga(track: MangaTrack)
 
     suspend fun insertAllManga(tracks: List<MangaTrack>)

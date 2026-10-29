@@ -9,6 +9,15 @@ class InsertAnimeTrack(
     private val animetrackRepository: AnimeTrackRepository,
 ) {
 
+    suspend fun awaitIfSameIdentity(track: AnimeTrack, expected: AnimeTrack): Boolean {
+        return try {
+            animetrackRepository.updateIfSameIdentity(track, expected)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            false
+        }
+    }
+
     suspend fun await(track: AnimeTrack) {
         try {
             animetrackRepository.insertAnime(track)

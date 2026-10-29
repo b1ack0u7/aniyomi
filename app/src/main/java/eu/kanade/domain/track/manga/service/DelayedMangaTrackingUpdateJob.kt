@@ -15,6 +15,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.track.manga.interactor.GetMangaTracks
+import tachiyomi.domain.track.manga.model.identity
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
@@ -23,30 +24,25 @@ class DelayedMangaTrackingUpdateJob(private val context: Context, workerParams: 
     CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
-        if (runAttemptCount > 3) {
-            return Result.failure()
-        }
-
         val getTracks = Injekt.get<GetMangaTracks>()
         val trackChapter = Injekt.get<TrackChapter>()
 
         val delayedTrackingStore = Injekt.get<DelayedMangaTrackingStore>()
 
         withIOContext {
-            delayedTrackingStore.getMangaItems()
-                .mapNotNull {
-                    val track = getTracks.awaitOne(it.trackId)
-                    if (track == null) {
-                        delayedTrackingStore.removeMangaItem(it.trackId)
-                    }
-                    track?.copy(lastChapterRead = it.lastChapterRead.toDouble())
-                }
-                .forEach { track ->
-                    logcat(LogPriority.DEBUG) {
-                        "Updating delayed track item: ${track.mangaId}, last chapter read: ${track.lastChapterRead}"
-                    }
-                    trackChapter.await(context, track.mangaId, track.lastChapterRead, setupJobOnFailure = false)
-                }
+            delayedTrackingStore.getMangaItems().forEach { item ->
+                val track = getTracks.awaitOne(item.trackId) ?: return@forEach
+                if (track.identity != item.identity) return@forEach
+                logcat(LogPriority.DEBUG) { "Updating delayed manga track item: ${item.trackId}" }
+                trackChapter.await(
+                    context,
+                    track.mangaId,
+                    item.lastChapterRead.toDouble(),
+                    setupJobOnFailure = false,
+                    expectedIdentity = item.identity,
+                    expectedAccount = item.account,
+                )
+            }
         }
 
         return if (delayedTrackingStore.getMangaItems().isEmpty()) Result.success() else Result.retry()

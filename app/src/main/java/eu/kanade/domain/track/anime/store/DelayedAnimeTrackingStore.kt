@@ -1,44 +1,38 @@
 package eu.kanade.domain.track.anime.store
 
 import android.content.Context
-import androidx.core.content.edit
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
+import eu.kanade.domain.track.store.DelayedTrackingStore
+import tachiyomi.domain.track.anime.model.AnimeTrack
+import tachiyomi.domain.track.anime.model.identity
+import tachiyomi.domain.track.model.TrackingIdentity
 
 class DelayedAnimeTrackingStore(context: Context) {
 
-    /**
-     * Preference file where queued tracking updates are stored.
-     */
-    private val preferences = context.getSharedPreferences("tracking_queue", Context.MODE_PRIVATE)
+    private val store = DelayedTrackingStore(context, DelayedTrackingStore.Stack.ANIME)
 
-    fun addAnime(trackId: Long, lastEpisodeSeen: Double) {
-        val previousLastEpisodeSeen = preferences.getFloat(trackId.toString(), 0f)
-        if (lastEpisodeSeen > previousLastEpisodeSeen) {
-            logcat(LogPriority.DEBUG) { "Queuing track item: $trackId, last episode seen: $lastEpisodeSeen" }
-            preferences.edit {
-                putFloat(trackId.toString(), lastEpisodeSeen.toFloat())
-            }
-        }
+    fun addAnime(track: AnimeTrack, lastEpisodeSeen: Double, account: String) =
+        store.add(track.identity, account, lastEpisodeSeen)
+
+    fun removeAnimeItem(track: AnimeTrack, acknowledgedProgress: Double, account: String) =
+        store.remove(track.identity, account, acknowledgedProgress)
+
+    internal fun acknowledge(track: AnimeTrack, updatedTrack: AnimeTrack, progress: Double, account: String) =
+        store.acknowledge(track.identity, updatedTrack.identity, account, progress)
+
+    fun getAnimeItems(): List<DelayedAnimeTrackingItem> = store.items().map { (identity, account, progress) ->
+        DelayedAnimeTrackingItem(identity, account, progress)
     }
 
-    fun removeAnimeItem(trackId: Long) {
-        preferences.edit {
-            remove(trackId.toString())
-        }
-    }
+    internal fun getProgress(track: AnimeTrack, account: String): Float? = store.progress(track.identity, account)
 
-    fun getAnimeItems(): List<DelayedAnimeTrackingItem> {
-        return preferences.all.mapNotNull {
-            DelayedAnimeTrackingItem(
-                trackId = it.key.toLong(),
-                lastEpisodeSeen = it.value.toString().toFloat(),
-            )
-        }
-    }
+    internal suspend fun <T> withUpdateLock(trackId: Long, block: suspend () -> T): T =
+        store.withUpdateLock(trackId, block)
 
     data class DelayedAnimeTrackingItem(
-        val trackId: Long,
+        val identity: TrackingIdentity,
+        val account: String,
         val lastEpisodeSeen: Float,
-    )
+    ) {
+        val trackId: Long get() = identity.trackId
+    }
 }

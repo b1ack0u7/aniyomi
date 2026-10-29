@@ -9,6 +9,15 @@ class InsertMangaTrack(
     private val trackRepository: MangaTrackRepository,
 ) {
 
+    suspend fun awaitIfSameIdentity(track: MangaTrack, expected: MangaTrack): Boolean {
+        return try {
+            trackRepository.updateIfSameIdentity(track, expected)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            false
+        }
+    }
+
     suspend fun await(track: MangaTrack) {
         try {
             trackRepository.insertManga(track)

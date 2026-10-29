@@ -15,6 +15,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.track.anime.interactor.GetAnimeTracks
+import tachiyomi.domain.track.anime.model.identity
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.time.Duration.Companion.minutes
@@ -24,36 +25,25 @@ class DelayedAnimeTrackingUpdateJob(private val context: Context, workerParams: 
     CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
-        if (runAttemptCount > 3) {
-            return Result.failure()
-        }
-
         val getTracks = Injekt.get<GetAnimeTracks>()
         val trackEpisode = Injekt.get<TrackEpisode>()
 
         val delayedTrackingStore = Injekt.get<DelayedAnimeTrackingStore>()
 
         withIOContext {
-            delayedTrackingStore.getAnimeItems()
-                .mapNotNull {
-                    val track = getTracks.awaitOne(it.trackId)
-                    if (track == null) {
-                        delayedTrackingStore.removeAnimeItem(it.trackId)
-                    }
-                    track?.copy(lastEpisodeSeen = it.lastEpisodeSeen.toDouble())
-                }
-                .forEach { animeTrack ->
-                    logcat(LogPriority.DEBUG) {
-                        "Updating delayed track item: ${animeTrack.animeId}" +
-                            ", last chapter read: ${animeTrack.lastEpisodeSeen}"
-                    }
-                    trackEpisode.await(
-                        context,
-                        animeTrack.animeId,
-                        animeTrack.lastEpisodeSeen,
-                        setupJobOnFailure = false,
-                    )
-                }
+            delayedTrackingStore.getAnimeItems().forEach { item ->
+                val track = getTracks.awaitOne(item.trackId) ?: return@forEach
+                if (track.identity != item.identity) return@forEach
+                logcat(LogPriority.DEBUG) { "Updating delayed anime track item: ${item.trackId}" }
+                trackEpisode.await(
+                    context,
+                    track.animeId,
+                    item.lastEpisodeSeen.toDouble(),
+                    setupJobOnFailure = false,
+                    expectedIdentity = item.identity,
+                    expectedAccount = item.account,
+                )
+            }
         }
 
         return if (delayedTrackingStore.getAnimeItems().isEmpty()) Result.success() else Result.retry()

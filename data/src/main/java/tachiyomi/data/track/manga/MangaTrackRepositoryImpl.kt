@@ -1,8 +1,10 @@
 package tachiyomi.data.track.manga
 
 import kotlinx.coroutines.flow.Flow
+import tachiyomi.data.Database
 import tachiyomi.data.handlers.manga.MangaDatabaseHandler
 import tachiyomi.domain.track.manga.model.MangaTrack
+import tachiyomi.domain.track.manga.model.identity
 import tachiyomi.domain.track.manga.repository.MangaTrackRepository
 
 class MangaTrackRepositoryImpl(
@@ -10,33 +12,44 @@ class MangaTrackRepositoryImpl(
 ) : MangaTrackRepository {
 
     override suspend fun getTrackByMangaId(id: Long): MangaTrack? {
-        return handler.awaitOneOrNull { manga_syncQueries.getTrackById(id, MangaTrackMapper::mapTrack) }
+        return handler.awaitOneOrNull { manga_trackQueries.getTrackById(id, MangaTrackMapper::mapTrack) }
     }
 
     override suspend fun getTracksByMangaId(mangaId: Long): List<MangaTrack> {
         return handler.awaitList {
-            manga_syncQueries.getTracksByMangaId(mangaId, MangaTrackMapper::mapTrack)
+            manga_trackQueries.getTracksByMangaId(mangaId, MangaTrackMapper::mapTrack)
         }
     }
 
     override fun getMangaTracksAsFlow(): Flow<List<MangaTrack>> {
         return handler.subscribeToList {
-            manga_syncQueries.getTracks(MangaTrackMapper::mapTrack)
+            manga_trackQueries.getTracks(MangaTrackMapper::mapTrack)
         }
     }
 
     override fun getTracksByMangaIdAsFlow(mangaId: Long): Flow<List<MangaTrack>> {
         return handler.subscribeToList {
-            manga_syncQueries.getTracksByMangaId(mangaId, MangaTrackMapper::mapTrack)
+            manga_trackQueries.getTracksByMangaId(mangaId, MangaTrackMapper::mapTrack)
         }
     }
 
     override suspend fun delete(mangaId: Long, trackerId: Long) {
         handler.await {
-            manga_syncQueries.delete(
+            manga_trackQueries.delete(
                 mangaId = mangaId,
                 syncId = trackerId,
             )
+        }
+    }
+
+    override suspend fun updateIfSameIdentity(track: MangaTrack, expected: MangaTrack): Boolean {
+        return handler.await(inTransaction = true) {
+            if (!expected.identity.acceptsLibraryResolution(track.identity)) return@await false
+            val current = manga_trackQueries.getTrackById(expected.id, MangaTrackMapper::mapTrack)
+                .executeAsOneOrNull()
+            if (current == null || current.identity != expected.identity) return@await false
+            insertTrack(track.copy(lastChapterRead = maxOf(current.lastChapterRead, track.lastChapterRead)))
+            true
         }
     }
 
@@ -50,23 +63,25 @@ class MangaTrackRepositoryImpl(
 
     private suspend fun insertValues(vararg tracks: MangaTrack) {
         handler.await(inTransaction = true) {
-            tracks.forEach { mangaTrack ->
-                manga_syncQueries.insert(
-                    mangaId = mangaTrack.mangaId,
-                    syncId = mangaTrack.trackerId,
-                    remoteId = mangaTrack.remoteId,
-                    libraryId = mangaTrack.libraryId,
-                    title = mangaTrack.title,
-                    lastChapterRead = mangaTrack.lastChapterRead,
-                    totalChapters = mangaTrack.totalChapters,
-                    status = mangaTrack.status,
-                    score = mangaTrack.score,
-                    remoteUrl = mangaTrack.remoteUrl,
-                    startDate = mangaTrack.startDate,
-                    finishDate = mangaTrack.finishDate,
-                    private = mangaTrack.private,
-                )
-            }
+            tracks.forEach { insertTrack(it) }
         }
+    }
+
+    private fun Database.insertTrack(track: MangaTrack) {
+        manga_trackQueries.insert(
+            mangaId = track.mangaId,
+            syncId = track.trackerId,
+            remoteId = track.remoteId,
+            libraryId = track.libraryId,
+            title = track.title,
+            lastChapterRead = track.lastChapterRead,
+            totalChapters = track.totalChapters,
+            status = track.status,
+            score = track.score,
+            remoteUrl = track.remoteUrl,
+            startDate = track.startDate,
+            finishDate = track.finishDate,
+            private = track.private,
+        )
     }
 }

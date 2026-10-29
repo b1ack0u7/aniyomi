@@ -1,5 +1,6 @@
 package tachiyomi.domain.track.anime.model
 
+import tachiyomi.domain.track.model.TrackingIdentity
 import java.io.Serializable
 
 data class AnimeTrack(
@@ -18,3 +19,6 @@ data class AnimeTrack(
     val finishDate: Long,
     val private: Boolean,
 ) : Serializable
+
+val AnimeTrack.identity: TrackingIdentity
+    get() = TrackingIdentity(id, animeId, trackerId, remoteId, libraryId, remoteUrl)

@@ -3,40 +3,53 @@ package tachiyomi.data.track.anime
 import kotlinx.coroutines.flow.Flow
 import tachiyomi.data.handlers.anime.AnimeDatabaseHandler
 import tachiyomi.domain.track.anime.model.AnimeTrack
+import tachiyomi.domain.track.anime.model.identity
 import tachiyomi.domain.track.anime.repository.AnimeTrackRepository
+import tachiyomi.mi.data.AnimeDatabase
 
 class AnimeTrackRepositoryImpl(
     private val handler: AnimeDatabaseHandler,
 ) : AnimeTrackRepository {
 
     override suspend fun getTrackByAnimeId(id: Long): AnimeTrack? {
-        return handler.awaitOneOrNull { anime_syncQueries.getTrackByAnimeId(id, AnimeTrackMapper::mapTrack) }
+        return handler.awaitOneOrNull { anime_trackQueries.getTrackByAnimeId(id, AnimeTrackMapper::mapTrack) }
     }
 
     override suspend fun getTracksByAnimeId(animeId: Long): List<AnimeTrack> {
         return handler.awaitList {
-            anime_syncQueries.getTracksByAnimeId(animeId, AnimeTrackMapper::mapTrack)
+            anime_trackQueries.getTracksByAnimeId(animeId, AnimeTrackMapper::mapTrack)
         }
     }
 
     override fun getAnimeTracksAsFlow(): Flow<List<AnimeTrack>> {
         return handler.subscribeToList {
-            anime_syncQueries.getAnimeTracks(AnimeTrackMapper::mapTrack)
+            anime_trackQueries.getAnimeTracks(AnimeTrackMapper::mapTrack)
         }
     }
 
     override fun getTracksByAnimeIdAsFlow(animeId: Long): Flow<List<AnimeTrack>> {
         return handler.subscribeToList {
-            anime_syncQueries.getTracksByAnimeId(animeId, AnimeTrackMapper::mapTrack)
+            anime_trackQueries.getTracksByAnimeId(animeId, AnimeTrackMapper::mapTrack)
         }
     }
 
     override suspend fun delete(animeId: Long, trackerId: Long) {
         handler.await {
-            anime_syncQueries.delete(
+            anime_trackQueries.delete(
                 animeId = animeId,
                 syncId = trackerId,
             )
+        }
+    }
+
+    override suspend fun updateIfSameIdentity(track: AnimeTrack, expected: AnimeTrack): Boolean {
+        return handler.await(inTransaction = true) {
+            if (!expected.identity.acceptsLibraryResolution(track.identity)) return@await false
+            val current = anime_trackQueries.getTrackByAnimeId(expected.id, AnimeTrackMapper::mapTrack)
+                .executeAsOneOrNull()
+            if (current == null || current.identity != expected.identity) return@await false
+            insertTrack(track.copy(lastEpisodeSeen = maxOf(current.lastEpisodeSeen, track.lastEpisodeSeen)))
+            true
         }
     }
 
@@ -50,23 +63,25 @@ class AnimeTrackRepositoryImpl(
 
     private suspend fun insertValues(vararg tracks: AnimeTrack) {
         handler.await(inTransaction = true) {
-            tracks.forEach { animeTrack ->
-                anime_syncQueries.insert(
-                    animeId = animeTrack.animeId,
-                    syncId = animeTrack.trackerId,
-                    remoteId = animeTrack.remoteId,
-                    libraryId = animeTrack.libraryId,
-                    title = animeTrack.title,
-                    lastEpisodeSeen = animeTrack.lastEpisodeSeen,
-                    totalEpisodes = animeTrack.totalEpisodes,
-                    status = animeTrack.status,
-                    score = animeTrack.score,
-                    remoteUrl = animeTrack.remoteUrl,
-                    startDate = animeTrack.startDate,
-                    finishDate = animeTrack.finishDate,
-                    private = animeTrack.private,
-                )
-            }
+            tracks.forEach { insertTrack(it) }
         }
+    }
+
+    private fun AnimeDatabase.insertTrack(track: AnimeTrack) {
+        anime_trackQueries.insert(
+            animeId = track.animeId,
+            syncId = track.trackerId,
+            remoteId = track.remoteId,
+            libraryId = track.libraryId,
+            title = track.title,
+            lastEpisodeSeen = track.lastEpisodeSeen,
+            totalEpisodes = track.totalEpisodes,
+            status = track.status,
+            score = track.score,
+            remoteUrl = track.remoteUrl,
+            startDate = track.startDate,
+            finishDate = track.finishDate,
+            private = track.private,
+        )
     }
 }

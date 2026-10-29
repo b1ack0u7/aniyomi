@@ -15,6 +15,8 @@ interface AnimeTrackRepository {
 
     suspend fun delete(animeId: Long, trackerId: Long)
 
+    suspend fun updateIfSameIdentity(track: AnimeTrack, expected: AnimeTrack): Boolean
+
     suspend fun insertAnime(track: AnimeTrack)
 
     suspend fun insertAllAnime(tracks: List<AnimeTrack>)
