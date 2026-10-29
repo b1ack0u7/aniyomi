@@ -52,15 +52,18 @@ import eu.kanade.tachiyomi.util.system.notify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
+import mihon.core.database.DatabaseInitializer
 import mihon.core.migration.Migrator
 import mihon.core.migration.migrations.migrations
 import org.conscrypt.Conscrypt
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
@@ -108,6 +111,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
         val scope = ProcessLifecycleOwner.get().lifecycleScope
+        scope.launchIO { Injekt.get<DatabaseInitializer>().open() }
 
         // Show notification to disable Incognito Mode when it's enabled
         basePreferences.incognitoMode().changes()
@@ -148,13 +152,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
         setAppCompatDelegateThemeMode(Injekt.get<UiPreferences>().themeMode().get())
 
-        // Updates widget update
-        with(MangaWidgetManager(Injekt.get(), Injekt.get())) {
-            init(ProcessLifecycleOwner.get().lifecycleScope)
-        }
-
-        with(AnimeWidgetManager(Injekt.get(), Injekt.get())) {
-            init(ProcessLifecycleOwner.get().lifecycleScope)
+        scope.launch {
+            Injekt.get<DatabaseInitializer>().awaitReady()
+            with(MangaWidgetManager(Injekt.get(), Injekt.get())) {
+                init(scope)
+            }
+            with(AnimeWidgetManager(Injekt.get(), Injekt.get())) {
+                init(scope)
+            }
         }
 
         if (!LogcatLogger.isInstalled && networkPreferences.verboseLogging().get()) {
@@ -172,6 +177,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             old = preference.get(),
             new = BuildConfig.VERSION_CODE,
             migrations = migrations,
+            beforeMigration = { Injekt.get<DatabaseInitializer>().awaitReady() },
             onMigrationComplete = {
                 logcat { "Updating last version to ${BuildConfig.VERSION_CODE}" }
                 preference.set(BuildConfig.VERSION_CODE)

@@ -703,4 +703,9 @@
     <string name="player_choose_server">Choose server</string>
     <string name="player_filling_buffer">Filling buffer: approximately %1$d / %2$d s</string>
     <string name="player_filling_buffer_unknown">Filling buffer…</string>
+    <string name="database_opening">Opening your libraries…</string>
+    <string name="database_migrating">Updating your libraries…</string>
+    <string name="database_open_failed">Could not open your libraries</string>
+    <string name="database_open_failed_summary">The database was not reset. Copy the diagnostic to investigate the problem, then retry after it has been resolved.</string>
+    <string name="backup_history_identity_description">History includes the chapter and episode details needed to restore it, without reading progress, playback progress or marks.</string>
 </resources>

@@ -56,6 +56,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.core.database.DatabaseInitializer
 import mihon.domain.items.episode.interactor.FilterEpisodesForDownload
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
@@ -69,6 +70,7 @@ import tachiyomi.domain.items.episode.model.Episode
 import tachiyomi.domain.items.episode.model.NoEpisodesException
 import tachiyomi.domain.items.season.interactor.GetAnimeSeasonsByParentId
 import tachiyomi.domain.library.anime.LibraryAnime
+import tachiyomi.domain.library.model.filterByLibraryCategories
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_HAS_UNVIEWED
@@ -82,6 +84,7 @@ import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.source.local.entries.anime.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.time.Instant
 import java.time.ZonedDateTime
@@ -92,27 +95,30 @@ import java.util.concurrent.atomic.AtomicInteger
 class AnimeLibraryUpdateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
 
-    private val sourceManager: AnimeSourceManager = Injekt.get()
-    private val libraryPreferences: LibraryPreferences = Injekt.get()
-    private val downloadManager: AnimeDownloadManager = Injekt.get()
-    private val coverCache: AnimeCoverCache = Injekt.get()
-    private val backgroundCache: AnimeBackgroundCache = Injekt.get()
-    private val getLibraryAnime: GetLibraryAnime = Injekt.get()
-    private val getAnime: GetAnime = Injekt.get()
-    private val updateAnime: UpdateAnime = Injekt.get()
-    private val syncEpisodesWithSource: SyncEpisodesWithSource = Injekt.get()
-    private val animeFetchInterval: AnimeFetchInterval = Injekt.get()
-    private val filterEpisodesForDownload: FilterEpisodesForDownload = Injekt.get()
-    private val getAnimeSeasonsByParentId: GetAnimeSeasonsByParentId = Injekt.get()
+    private val sourceManager: AnimeSourceManager by injectLazy()
+    private val libraryPreferences: LibraryPreferences by injectLazy()
+    private val downloadManager: AnimeDownloadManager by injectLazy()
+    private val coverCache: AnimeCoverCache by injectLazy()
+    private val backgroundCache: AnimeBackgroundCache by injectLazy()
+    private val getLibraryAnime: GetLibraryAnime by injectLazy()
+    private val getAnime: GetAnime by injectLazy()
+    private val updateAnime: UpdateAnime by injectLazy()
+    private val syncEpisodesWithSource: SyncEpisodesWithSource by injectLazy()
+    private val animeFetchInterval: AnimeFetchInterval by injectLazy()
+    private val filterEpisodesForDownload: FilterEpisodesForDownload by injectLazy()
+    private val getAnimeSeasonsByParentId: GetAnimeSeasonsByParentId by injectLazy()
 
-    private val sourceRequests: SourceRequestCoordinator = Injekt.get()
-    private val retries = LibraryUpdateRetryController(context, LibraryUpdateType.ANIME, sourceRequests)
+    private val sourceRequests: SourceRequestCoordinator by injectLazy()
+    private val retries by lazy {
+        LibraryUpdateRetryController(context, LibraryUpdateType.ANIME, sourceRequests)
+    }
 
-    private val notifier = AnimeLibraryUpdateNotifier(context)
+    private val notifier by lazy { AnimeLibraryUpdateNotifier(context) }
 
     private var animeToUpdate: List<LibraryAnime> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (!Injekt.get<DatabaseInitializer>().awaitReadyOrFailure()) return Result.retry()
         sourceManager.isInitialized.first { it }
         if (!runLock.tryLock()) return Result.retry()
         return try {
@@ -193,25 +199,11 @@ class AnimeLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         val listToUpdate = if (retryIds != null) {
             libraryAnime
         } else if (categoryId != -1L) {
-            libraryAnime.filter { it.category == categoryId }
+            libraryAnime.filter { categoryId in it.categories }
         } else {
             val categoriesToUpdate = libraryPreferences.animeUpdateCategories().get().map { it.toLong() }
-            val includedAnime = if (categoriesToUpdate.isNotEmpty()) {
-                libraryAnime.filter { it.category in categoriesToUpdate }
-            } else {
-                libraryAnime
-            }
-
             val categoriesToExclude = libraryPreferences.animeUpdateCategoriesExclude().get().map { it.toLong() }
-            val excludedAnimeIds = if (categoriesToExclude.isNotEmpty()) {
-                libraryAnime.filter { it.category in categoriesToExclude }.map { it.anime.id }
-            } else {
-                emptyList()
-            }
-
-            includedAnime
-                .filterNot { it.anime.id in excludedAnimeIds }
-                .distinctBy { it.anime.id }
+            libraryAnime.filterByLibraryCategories(categoriesToUpdate, categoriesToExclude) { it.categories }
         }
 
         val lastToUpdateWithSeasons = selectAnimeForLibraryUpdate(

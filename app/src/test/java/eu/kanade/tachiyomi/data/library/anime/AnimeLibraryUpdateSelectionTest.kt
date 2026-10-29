@@ -79,7 +79,7 @@ class AnimeLibraryUpdateSelectionTest {
         var calls = 0
 
         val selected = selectAnimeForLibraryUpdate(
-            libraryAnime = listOf(parent.copy(category = 1), parent.copy(category = 2)),
+            libraryAnime = listOf(parent.copy(categories = listOf(1, 2))),
             includeSeasons = true,
             retryIds = null,
         ) {

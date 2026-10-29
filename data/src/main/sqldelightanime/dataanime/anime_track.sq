@@ -1,7 +1,7 @@
 import kotlin.Boolean;
 
-CREATE TABLE anime_sync(
-    _id INTEGER NOT NULL PRIMARY KEY,
+CREATE TABLE anime_track(
+    id INTEGER NOT NULL PRIMARY KEY,
     anime_id INTEGER NOT NULL,
     sync_id INTEGER NOT NULL,
     remote_id INTEGER NOT NULL,
@@ -15,36 +15,48 @@ CREATE TABLE anime_sync(
     start_date INTEGER NOT NULL,
     finish_date INTEGER NOT NULL,
     private INTEGER AS Boolean DEFAULT 0 NOT NULL,
-    UNIQUE (anime_id, sync_id) ON CONFLICT REPLACE,
-    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    UNIQUE (anime_id, sync_id),
+    FOREIGN KEY(anime_id) REFERENCES anime (id)
     ON DELETE CASCADE
 );
 
 delete:
-DELETE FROM anime_sync
+DELETE FROM anime_track
 WHERE anime_id = :animeId AND sync_id = :syncId;
 
 getAnimeTracks:
 SELECT *
-FROM anime_sync;
+FROM anime_track;
 
 getTrackByAnimeId:
 SELECT *
-FROM anime_sync
-WHERE _id = :id;
+FROM anime_track
+WHERE id = :id;
 
 
 getTracksByAnimeId:
 SELECT *
-FROM anime_sync
+FROM anime_track
 WHERE anime_id = :animeId;
 
 insert:
-INSERT INTO anime_sync(anime_id,sync_id,remote_id,library_id,title,last_episode_seen,total_episodes,status,score,remote_url,start_date,finish_date,private)
-VALUES (:animeId,:syncId,:remoteId,:libraryId,:title,:lastEpisodeSeen,:totalEpisodes,:status,:score,:remoteUrl,:startDate,:finishDate,:private);
+INSERT INTO anime_track(anime_id,sync_id,remote_id,library_id,title,last_episode_seen,total_episodes,status,score,remote_url,start_date,finish_date,private)
+VALUES (:animeId,:syncId,:remoteId,:libraryId,:title,:lastEpisodeSeen,:totalEpisodes,:status,:score,:remoteUrl,:startDate,:finishDate,:private)
+ON CONFLICT(anime_id, sync_id) DO UPDATE SET
+    remote_id = excluded.remote_id,
+    library_id = excluded.library_id,
+    title = excluded.title,
+    last_episode_seen = excluded.last_episode_seen,
+    total_episodes = excluded.total_episodes,
+    status = excluded.status,
+    score = excluded.score,
+    remote_url = excluded.remote_url,
+    start_date = excluded.start_date,
+    finish_date = excluded.finish_date,
+    private = excluded.private;
 
 update:
-UPDATE anime_sync
+UPDATE anime_track
 SET
     anime_id = coalesce(:animeId, anime_id),
     sync_id = coalesce(:syncId, sync_id),
@@ -59,8 +71,8 @@ SET
     start_date = coalesce(:startDate, start_date),
     finish_date = coalesce(:finishDate, finish_date),
     private = coalesce(:private, private)
-WHERE _id = :id;
+WHERE id = :id;
 
 getTracksByAnimeIds:
-SELECT * FROM anime_sync
+SELECT * FROM anime_track
 WHERE anime_id IN :animeIds;

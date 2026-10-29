@@ -2,11 +2,9 @@ package eu.kanade.tachiyomi.ui.stats.anime
 
 import androidx.compose.ui.util.fastDistinctBy
 import androidx.compose.ui.util.fastFilter
-import androidx.compose.ui.util.fastMapNotNull
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.util.fastCountNot
-import eu.kanade.core.util.fastFilterNot
 import eu.kanade.presentation.more.stats.StatsScreenState
 import eu.kanade.presentation.more.stats.data.StatsData
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -18,6 +16,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.entries.anime.interactor.GetLibraryAnime
 import tachiyomi.domain.items.episode.interactor.GetEpisodesByAnimeId
 import tachiyomi.domain.library.anime.LibraryAnime
+import tachiyomi.domain.library.model.filterByLibraryCategories
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_HAS_UNVIEWED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_NON_COMPLETED
@@ -89,24 +88,13 @@ class AnimeStatsScreenModel(
 
     private fun getGlobalUpdateItemCount(libraryAnime: List<LibraryAnime>): Int {
         val includedCategories = preferences.animeUpdateCategories().get().map { it.toLong() }
-        val includedAnime = if (includedCategories.isNotEmpty()) {
-            libraryAnime.filter { it.category in includedCategories }
-        } else {
-            libraryAnime
-        }
-
         val excludedCategories = preferences.animeUpdateCategoriesExclude().get().map { it.toLong() }
-        val excludedMangaIds = if (excludedCategories.isNotEmpty()) {
-            libraryAnime.fastMapNotNull { anime ->
-                anime.id.takeIf { anime.category in excludedCategories }
-            }
-        } else {
-            emptyList()
+        val includedAnime = libraryAnime.filterByLibraryCategories(includedCategories, excludedCategories) {
+            it.categories
         }
 
         val updateRestrictions = preferences.autoUpdateItemRestrictions().get()
         return includedAnime
-            .fastFilterNot { it.anime.id in excludedMangaIds }
             .fastDistinctBy { it.anime.id }
             .fastCountNot {
                 (ENTRY_NON_COMPLETED in updateRestrictions && it.anime.status.toInt() == SAnime.COMPLETED) ||

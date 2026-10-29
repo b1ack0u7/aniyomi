@@ -11,6 +11,8 @@ import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import tachiyomi.mi.data.AnimeDatabase
 
@@ -19,6 +21,7 @@ class AndroidAnimeDatabaseHandler(
     private val driver: SqlDriver,
     val queryDispatcher: CoroutineDispatcher = Dispatchers.IO,
     val transactionDispatcher: CoroutineDispatcher = queryDispatcher,
+    private val awaitReady: suspend () -> Unit = {},
 ) : AnimeDatabaseHandler {
 
     val suspendingTransactionId = ThreadLocal<Int>()
@@ -63,15 +66,24 @@ class AndroidAnimeDatabaseHandler(
     }
 
     override fun <T : Any> subscribeToList(block: AnimeDatabase.() -> Query<T>): Flow<List<T>> {
-        return block(db).asFlow().mapToList(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToList(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToOne(block: AnimeDatabase.() -> Query<T>): Flow<T> {
-        return block(db).asFlow().mapToOne(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToOne(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToOneOrNull(block: AnimeDatabase.() -> Query<T>): Flow<T?> {
-        return block(db).asFlow().mapToOneOrNull(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToOneOrNull(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToPagingSource(
@@ -88,6 +100,8 @@ class AndroidAnimeDatabaseHandler(
     }
 
     private suspend fun <T> dispatch(inTransaction: Boolean, block: suspend AnimeDatabase.() -> T): T {
+        awaitReady()
+
         // Create a transaction if needed and run the calling block inside it.
         if (inTransaction) {
             return withAnimeTransaction { block(db) }

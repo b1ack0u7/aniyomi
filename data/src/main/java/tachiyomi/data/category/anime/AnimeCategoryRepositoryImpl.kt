@@ -12,52 +12,52 @@ class AnimeCategoryRepositoryImpl(
 ) : AnimeCategoryRepository {
 
     override suspend fun getAnimeCategory(id: Long): Category? {
-        return handler.awaitOneOrNull { categoriesQueries.getCategory(id, ::mapCategory) }
+        return handler.awaitOneOrNull { categoryQueries.getCategory(id, ::mapCategory) }
     }
 
     override suspend fun getAllAnimeCategories(): List<Category> {
-        return handler.awaitList { categoriesQueries.getCategories(::mapCategory) }
+        return handler.awaitList { categoryQueries.getCategories(::mapCategory) }
     }
 
     override suspend fun getAllVisibleAnimeCategories(): List<Category> {
-        return handler.awaitList { categoriesQueries.getVisibleCategories(::mapCategory) }
+        return handler.awaitList { categoryQueries.getVisibleCategories(::mapCategory) }
     }
 
     override fun getAllAnimeCategoriesAsFlow(): Flow<List<Category>> {
-        return handler.subscribeToList { categoriesQueries.getCategories(::mapCategory) }
+        return handler.subscribeToList { categoryQueries.getCategories(::mapCategory) }
     }
 
     override fun getAllVisibleAnimeCategoriesAsFlow(): Flow<List<Category>> {
-        return handler.subscribeToList { categoriesQueries.getVisibleCategories(::mapCategory) }
+        return handler.subscribeToList { categoryQueries.getVisibleCategories(::mapCategory) }
     }
 
     override suspend fun getCategoriesByAnimeId(animeId: Long): List<Category> {
         return handler.awaitList {
-            categoriesQueries.getCategoriesByAnimeId(animeId, ::mapCategory)
+            categoryQueries.getCategoriesByAnimeId(animeId, ::mapCategory)
         }
     }
 
     override suspend fun getVisibleCategoriesByAnimeId(animeId: Long): List<Category> {
         return handler.awaitList {
-            categoriesQueries.getVisibleCategoriesByAnimeId(animeId, ::mapCategory)
+            categoryQueries.getVisibleCategoriesByAnimeId(animeId, ::mapCategory)
         }
     }
 
     override fun getCategoriesByAnimeIdAsFlow(animeId: Long): Flow<List<Category>> {
         return handler.subscribeToList {
-            categoriesQueries.getCategoriesByAnimeId(animeId, ::mapCategory)
+            categoryQueries.getCategoriesByAnimeId(animeId, ::mapCategory)
         }
     }
 
     override fun getVisibleCategoriesByAnimeIdAsFlow(animeId: Long): Flow<List<Category>> {
         return handler.subscribeToList {
-            categoriesQueries.getVisibleCategoriesByAnimeId(animeId, ::mapCategory)
+            categoryQueries.getVisibleCategoriesByAnimeId(animeId, ::mapCategory)
         }
     }
 
     override suspend fun insertAnimeCategory(category: Category) {
         handler.await {
-            categoriesQueries.insert(
+            categoryQueries.insert(
                 name = category.name,
                 order = category.order,
                 flags = category.flags,
@@ -80,7 +80,7 @@ class AnimeCategoryRepositoryImpl(
     }
 
     private fun AnimeDatabase.updatePartialBlocking(update: CategoryUpdate) {
-        categoriesQueries.update(
+        categoryQueries.update(
             name = update.name,
             order = update.order,
             flags = update.flags,
@@ -91,13 +91,13 @@ class AnimeCategoryRepositoryImpl(
 
     override suspend fun updateAllAnimeCategoryFlags(flags: Long?) {
         handler.await {
-            categoriesQueries.updateAllFlags(flags)
+            categoryQueries.updateAllFlags(flags)
         }
     }
 
     override suspend fun deleteAnimeCategory(categoryId: Long) {
         handler.await {
-            categoriesQueries.delete(
+            categoryQueries.delete(
                 categoryId = categoryId,
             )
         }

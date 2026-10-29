@@ -34,7 +34,7 @@ class MangaStorageScreenModel(
     getDownloadSize = { downloadManager.getDownloadSize(manga) },
     getDownloadCount = { downloadManager.getDownloadCount(manga) },
     getId = { id },
-    getCategoryId = { category },
+    getCategoryIds = { categories },
     getTitle = { manga.title },
     getThumbnail = { manga.thumbnailUrl },
 ) {

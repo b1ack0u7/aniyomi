@@ -1,7 +1,7 @@
 CREATE VIEW animehistorystatsView AS
 SELECT
-    episodes.anime_id,
+    episode.anime_id AS anime_id,
     max(ah.last_seen) AS lastSeen
-FROM episodes
-LEFT JOIN animehistory AS ah ON episodes._id = ah.episode_id
-GROUP BY episodes.anime_id;
+FROM episode
+LEFT JOIN anime_history AS ah ON episode.id = ah.episode_id
+GROUP BY episode.anime_id;

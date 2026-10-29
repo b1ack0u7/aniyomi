@@ -1,9 +1,7 @@
 package tachiyomi.data.items.chapter
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import data.Chapters
 import data.History
-import data.Mangas
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
@@ -18,6 +16,8 @@ import tachiyomi.data.handlers.manga.AndroidMangaDatabaseHandler
 import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.items.chapter.model.ChapterUpdate
 import java.util.Date
+import data.Chapter as Chapters
+import data.Manga as Mangas
 
 class ChapterRepositoryImplTest {
 
@@ -39,7 +39,7 @@ class ChapterRepositoryImplTest {
     fun `insert failure rolls back deletions additions and history`() = withFixture {
         val before = repository.getChapterByMangaId(1)
         val historyBefore = db.historyQueries.getHistoryByMangaId(1).executeAsList()
-        failStatement("INSERT", "NEW.url = '/fail'")
+        failStatement("INSERT", "NEW.remote_url = '/fail'")
 
         val result = runCatching {
             repository.syncChapters(
@@ -58,7 +58,7 @@ class ChapterRepositoryImplTest {
     fun `update failure also rolls back inserted and deleted rows`() = withFixture {
         val before = repository.getChapterByMangaId(1)
         val historyBefore = db.historyQueries.getHistoryByMangaId(1).executeAsList()
-        failStatement("UPDATE", "NEW.name = 'fail'")
+        failStatement("UPDATE", "NEW.remote_name = 'fail'")
 
         val result = runCatching {
             repository.syncChapters(
@@ -95,7 +95,7 @@ class ChapterRepositoryImplTest {
 
     @Test
     fun `standalone inserts propagate failures`() = withFixture {
-        failStatement("INSERT", "NEW.url = '/fail'")
+        failStatement("INSERT", "NEW.remote_url = '/fail'")
 
         val result = runCatching { repository.addAllChapters(listOf(item("/fail"))) }
 
@@ -104,12 +104,50 @@ class ChapterRepositoryImplTest {
 
     @Test
     fun `standalone deletes propagate failures`() = withFixture {
-        failStatement("DELETE", "OLD._id = ${original.id}")
+        failStatement("DELETE", "OLD.id = ${original.id}")
 
         val result = runCatching { repository.removeChaptersWithIds(listOf(original.id)) }
 
         result.exceptionOrNull()?.message?.contains("injected failure") shouldBe true
         repository.getChapterById(original.id) shouldBe original
+    }
+
+    @Test
+    fun `duplicate URLs return the stored item and its real ID`() = withFixture {
+        val inserted = repository.addAllChapters(
+            listOf(item("/old").copy(name = "Conflicting name"), item("/old")),
+        )
+
+        inserted shouldBe listOf(original, original)
+        repository.getChapterByMangaId(1, applyScanlatorFilter = false) shouldBe listOf(original, retained)
+    }
+
+    @Test
+    fun `sync collision reuses the original item without replacing its history`() = withFixture {
+        val historyBefore = db.historyQueries.getHistoryByMangaId(1).executeAsList()
+
+        val inserted = repository.syncChapters(
+            chaptersToAdd = listOf(item("/old")),
+            chaptersToUpdate = emptyList(),
+            chapterIdsToDelete = emptyList(),
+        )
+
+        inserted shouldBe listOf(original)
+        db.historyQueries.getHistoryByMangaId(1).executeAsList() shouldBe historyBefore
+    }
+
+    @Test
+    fun `tracker upsert updates the existing row without replacing its ID`() = withFixture {
+        db.manga_trackQueries.insert(1, 1, 10, null, "Original", 2.0, 12, 1, 5.0, "/track", 0, 0, false)
+        val before = db.manga_trackQueries.getTracksByMangaId(1).executeAsOne()
+
+        db.manga_trackQueries.insert(1, 1, 20, null, "Updated", 4.0, 24, 2, 8.0, "/updated", 0, 0, true)
+        val after = db.manga_trackQueries.getTracksByMangaId(1).executeAsOne()
+
+        after.id shouldBe before.id
+        after.remote_id shouldBe 20L
+        after.title shouldBe "Updated"
+        after.private_ shouldBe true
     }
 
     private fun withFixture(block: suspend Fixture.() -> Unit) = runBlocking<Unit> {
@@ -123,9 +161,9 @@ class ChapterRepositoryImplTest {
         val driver = FailingSqlDriver(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
         val db = Database(
             driver = driver,
-            chaptersAdapter = Chapters.Adapter(MemoColumnAdapter),
+            chapterAdapter = Chapters.Adapter(MemoColumnAdapter),
             historyAdapter = History.Adapter(DateColumnAdapter),
-            mangasAdapter = Mangas.Adapter(
+            mangaAdapter = Mangas.Adapter(
                 StringListColumnAdapter,
                 MangaUpdateStrategyColumnAdapter,
                 MemoColumnAdapter,
@@ -141,9 +179,9 @@ class ChapterRepositoryImplTest {
             driver.execute(
                 null,
                 """
-                    INSERT INTO mangas (
-                        _id, source, url, title, status, favorite, initialized, viewer,
-                        chapter_flags, cover_last_modified, date_added
+                    INSERT INTO manga (
+                        id, source_id, remote_url, remote_title, remote_status, favorite, state_initialized, user_viewer,
+                        user_chapter_flags, state_cover_last_modified, date_added
                     ) VALUES (1, 1, '/manga', 'Manga', 0, 1, 1, 0, 0, 0, 0)
                 """.trimIndent(),
                 0,
@@ -165,7 +203,7 @@ class ChapterRepositoryImplTest {
             driver.execute(
                 null,
                 """
-                    CREATE TEMP TRIGGER fail_write BEFORE $operation ON chapters
+                    CREATE TEMP TRIGGER fail_write BEFORE $operation ON chapter
                     WHEN $condition BEGIN SELECT RAISE(ABORT, 'injected failure'); END
                 """.trimIndent(),
                 0,

@@ -56,6 +56,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.core.database.DatabaseInitializer
 import mihon.domain.items.chapter.interactor.FilterChaptersForDownload
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
@@ -69,6 +70,7 @@ import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.items.chapter.model.NoChaptersException
 import tachiyomi.domain.library.manga.LibraryManga
+import tachiyomi.domain.library.model.filterByLibraryCategories
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_HAS_UNVIEWED
@@ -81,6 +83,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.source.local.entries.manga.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.time.Instant
 import java.time.ZonedDateTime
@@ -91,26 +94,29 @@ import java.util.concurrent.atomic.AtomicInteger
 class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
 
-    private val sourceManager: MangaSourceManager = Injekt.get()
-    private val libraryPreferences: LibraryPreferences = Injekt.get()
-    private val downloadManager: MangaDownloadManager = Injekt.get()
-    private val coverCache: MangaCoverCache = Injekt.get()
-    private val getLibraryManga: GetLibraryManga = Injekt.get()
-    private val getManga: GetManga = Injekt.get()
-    private val updateManga: UpdateManga = Injekt.get()
-    private val syncChaptersWithSource: SyncChaptersWithSource = Injekt.get()
-    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get()
-    private val mangaFetchInterval: MangaFetchInterval = Injekt.get()
-    private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get()
+    private val sourceManager: MangaSourceManager by injectLazy()
+    private val libraryPreferences: LibraryPreferences by injectLazy()
+    private val downloadManager: MangaDownloadManager by injectLazy()
+    private val coverCache: MangaCoverCache by injectLazy()
+    private val getLibraryManga: GetLibraryManga by injectLazy()
+    private val getManga: GetManga by injectLazy()
+    private val updateManga: UpdateManga by injectLazy()
+    private val syncChaptersWithSource: SyncChaptersWithSource by injectLazy()
+    private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()
+    private val mangaFetchInterval: MangaFetchInterval by injectLazy()
+    private val filterChaptersForDownload: FilterChaptersForDownload by injectLazy()
 
-    private val sourceRequests: SourceRequestCoordinator = Injekt.get()
-    private val retries = LibraryUpdateRetryController(context, LibraryUpdateType.MANGA, sourceRequests)
+    private val sourceRequests: SourceRequestCoordinator by injectLazy()
+    private val retries by lazy {
+        LibraryUpdateRetryController(context, LibraryUpdateType.MANGA, sourceRequests)
+    }
 
-    private val notifier = MangaLibraryUpdateNotifier(context)
+    private val notifier by lazy { MangaLibraryUpdateNotifier(context) }
 
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (!Injekt.get<DatabaseInitializer>().awaitReadyOrFailure()) return Result.retry()
         sourceManager.isInitialized.first { it }
         if (!runLock.tryLock()) return Result.retry()
         return try {
@@ -190,25 +196,11 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         val listToUpdate = if (retryIds != null) {
             libraryManga.filter { it.manga.id in retryIds }.distinctBy { it.manga.id }
         } else if (categoryId != -1L) {
-            libraryManga.filter { it.category == categoryId }
+            libraryManga.filter { categoryId in it.categories }
         } else {
             val categoriesToUpdate = libraryPreferences.mangaUpdateCategories().get().map { it.toLong() }
-            val includedManga = if (categoriesToUpdate.isNotEmpty()) {
-                libraryManga.filter { it.category in categoriesToUpdate }
-            } else {
-                libraryManga
-            }
-
             val categoriesToExclude = libraryPreferences.mangaUpdateCategoriesExclude().get().map { it.toLong() }
-            val excludedMangaIds = if (categoriesToExclude.isNotEmpty()) {
-                libraryManga.filter { it.category in categoriesToExclude }.map { it.manga.id }
-            } else {
-                emptyList()
-            }
-
-            includedManga
-                .filterNot { it.manga.id in excludedMangaIds }
-                .distinctBy { it.manga.id }
+            libraryManga.filterByLibraryCategories(categoriesToUpdate, categoriesToExclude) { it.categories }
         }
 
         val restrictions = libraryPreferences.autoUpdateItemRestrictions().get()

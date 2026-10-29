@@ -5,7 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
 
 object Migrator {
 
@@ -17,13 +17,17 @@ object Migrator {
         new: Int,
         migrations: List<Migration>,
         dryrun: Boolean = false,
+        beforeMigration: suspend () -> Unit = {},
         onMigrationComplete: () -> Unit,
     ) {
         val migrationContext = MigrationContext(dryrun)
         val migrationJobFactory = MigrationJobFactory(migrationContext, scope)
         val migrationStrategyFactory = MigrationStrategyFactory(migrationJobFactory, onMigrationComplete)
         val strategy = migrationStrategyFactory.create(old, new)
-        result = strategy(migrations)
+        result = scope.async {
+            beforeMigration()
+            strategy(migrations).await()
+        }
     }
 
     suspend fun await(): Boolean {
@@ -35,7 +39,5 @@ object Migrator {
         result = null
     }
 
-    fun awaitAndRelease(): Boolean = runBlocking {
-        await().also { release() }
-    }
+    suspend fun awaitAndRelease(): Boolean = await().also { release() }
 }

@@ -11,6 +11,8 @@ import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import tachiyomi.data.Database
 
@@ -19,6 +21,7 @@ class AndroidMangaDatabaseHandler(
     private val driver: SqlDriver,
     val queryDispatcher: CoroutineDispatcher = Dispatchers.IO,
     val transactionDispatcher: CoroutineDispatcher = queryDispatcher,
+    private val awaitReady: suspend () -> Unit = {},
 ) : MangaDatabaseHandler {
 
     val suspendingTransactionId = ThreadLocal<Int>()
@@ -63,15 +66,24 @@ class AndroidMangaDatabaseHandler(
     }
 
     override fun <T : Any> subscribeToList(block: Database.() -> Query<T>): Flow<List<T>> {
-        return block(db).asFlow().mapToList(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToList(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToOne(block: Database.() -> Query<T>): Flow<T> {
-        return block(db).asFlow().mapToOne(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToOne(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToOneOrNull(block: Database.() -> Query<T>): Flow<T?> {
-        return block(db).asFlow().mapToOneOrNull(queryDispatcher)
+        return flow {
+            awaitReady()
+            emitAll(block(db).asFlow().mapToOneOrNull(queryDispatcher))
+        }
     }
 
     override fun <T : Any> subscribeToPagingSource(
@@ -88,6 +100,8 @@ class AndroidMangaDatabaseHandler(
     }
 
     private suspend fun <T> dispatch(inTransaction: Boolean, block: suspend Database.() -> T): T {
+        awaitReady()
+
         // Create a transaction if needed and run the calling block inside it.
         if (inTransaction) {
             return withMangaTransaction { block(db) }

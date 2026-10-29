@@ -21,16 +21,16 @@ class AnimeRepositoryImpl(
 ) : AnimeRepository {
 
     override suspend fun getAnimeById(id: Long): Anime {
-        return handler.awaitOne { animesQueries.getAnimeById(id, AnimeMapper::mapAnime) }
+        return handler.awaitOne { animeQueries.getAnimeById(id, AnimeMapper::mapAnime) }
     }
 
     override suspend fun getAnimeByIdAsFlow(id: Long): Flow<Anime> {
-        return handler.subscribeToOne { animesQueries.getAnimeById(id, AnimeMapper::mapAnime) }
+        return handler.subscribeToOne { animeQueries.getAnimeById(id, AnimeMapper::mapAnime) }
     }
 
     override suspend fun getAnimeByUrlAndSourceId(url: String, sourceId: Long): Anime? {
         return handler.awaitOneOrNull {
-            animesQueries.getAnimeByUrlAndSource(
+            animeQueries.getAnimeByUrlAndSource(
                 url,
                 sourceId,
                 AnimeMapper::mapAnime,
@@ -40,7 +40,7 @@ class AnimeRepositoryImpl(
 
     override fun getAnimeByUrlAndSourceIdAsFlow(url: String, sourceId: Long): Flow<Anime?> {
         return handler.subscribeToOneOrNull {
-            animesQueries.getAnimeByUrlAndSource(
+            animeQueries.getAnimeByUrlAndSource(
                 url,
                 sourceId,
                 AnimeMapper::mapAnime,
@@ -49,15 +49,15 @@ class AnimeRepositoryImpl(
     }
 
     override suspend fun getAnimeFavorites(): List<Anime> {
-        return handler.awaitList { animesQueries.getFavorites(AnimeMapper::mapAnime) }
+        return handler.awaitList { animeQueries.getFavorites(AnimeMapper::mapAnime) }
     }
 
     override suspend fun getWatchedAnimeNotInLibrary(): List<Anime> {
-        return handler.awaitList { animesQueries.getWatchedAnimeNotInLibrary(AnimeMapper::mapAnime) }
+        return handler.awaitList { animeQueries.getWatchedAnimeNotInLibrary(AnimeMapper::mapAnime) }
     }
 
     override suspend fun getMaxAnimeId(): Long {
-        return handler.awaitOne { animesQueries.getMaxAnimeId() }
+        return handler.awaitOne { animeQueries.getMaxAnimeId() }
     }
 
     override suspend fun getBackupAnimeBatch(
@@ -67,7 +67,7 @@ class AnimeRepositoryImpl(
         includeReadEntries: Boolean,
     ): List<Anime> {
         return handler.awaitList {
-            animesQueries.getBackupAnimeBatch(
+            animeQueries.getBackupAnimeBatch(
                 afterId = afterId,
                 upToId = upToId,
                 includeReadEntries = if (includeReadEntries) 1 else 0,
@@ -86,25 +86,25 @@ class AnimeRepositoryImpl(
     }
 
     override fun getAnimeFavoritesBySourceId(sourceId: Long): Flow<List<Anime>> {
-        return handler.subscribeToList { animesQueries.getFavoriteBySourceId(sourceId, AnimeMapper::mapAnime) }
+        return handler.subscribeToList { animeQueries.getFavoriteBySourceId(sourceId, AnimeMapper::mapAnime) }
     }
 
     override suspend fun getDuplicateLibraryAnime(id: Long, title: String): List<Anime> {
         return handler.awaitList {
-            animesQueries.getDuplicateLibraryAnime(title, id, AnimeMapper::mapAnime)
+            animeQueries.getDuplicateLibraryAnime(title, id, AnimeMapper::mapAnime)
         }
     }
 
     override suspend fun getUpcomingAnime(statuses: Set<Long>): Flow<List<Anime>> {
         val epochMillis = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
         return handler.subscribeToList {
-            animesQueries.getUpcomingAnime(epochMillis, statuses, AnimeMapper::mapAnime)
+            animeQueries.getUpcomingAnime(epochMillis, statuses, AnimeMapper::mapAnime)
         }
     }
 
     override suspend fun resetAnimeViewerFlags(): Boolean {
         return try {
-            handler.await { animesQueries.resetViewerFlags() }
+            handler.await { animeQueries.resetViewerFlags() }
             true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
@@ -114,16 +114,16 @@ class AnimeRepositoryImpl(
 
     override suspend fun setAnimeCategories(animeId: Long, categoryIds: List<Long>) {
         handler.await(inTransaction = true) {
-            animes_categoriesQueries.deleteAnimeCategoryByAnimeId(animeId)
+            anime_categoryQueries.deleteAnimeCategoryByAnimeId(animeId)
             categoryIds.map { categoryId ->
-                animes_categoriesQueries.insert(animeId, categoryId)
+                anime_categoryQueries.insert(animeId, categoryId)
             }
         }
     }
 
     override suspend fun insertAnime(anime: Anime): Long? {
         return handler.awaitOneOrNullExecutable(inTransaction = true) {
-            animesQueries.insert(
+            animeQueries.insert(
                 source = anime.source,
                 url = anime.url,
                 artist = anime.artist,
@@ -152,7 +152,7 @@ class AnimeRepositoryImpl(
                 seasonNumber = anime.seasonNumber,
                 seasonSourceOrder = anime.seasonSourceOrder,
             )
-            animesQueries.selectLastInsertedRowId()
+            animeQueries.getExistingId(anime.source, anime.url)
         }
     }
 
@@ -188,7 +188,7 @@ class AnimeRepositoryImpl(
 
     override suspend fun removeParentIdByIds(animeIds: List<Long>) {
         try {
-            handler.await { animesQueries.removeParentIdByIds(animeIds) }
+            handler.await { animeQueries.removeParentIdByIds(animeIds) }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
         }
@@ -201,13 +201,13 @@ class AnimeRepositoryImpl(
     }
 
     override suspend fun getChildrenByParentId(parentId: Long): List<Anime> {
-        return handler.awaitList { animesQueries.getChildrenByParentId(parentId, AnimeMapper::mapAnime) }
+        return handler.awaitList { animeQueries.getChildrenByParentId(parentId, AnimeMapper::mapAnime) }
     }
 
     private suspend fun partialUpdateAnime(vararg animeUpdates: AnimeUpdate) {
         handler.await(inTransaction = true) {
             animeUpdates.forEach { value ->
-                animesQueries.update(
+                animeQueries.update(
                     source = value.source,
                     url = value.url,
                     artist = value.artist,

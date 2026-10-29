@@ -13,7 +13,7 @@ internal class FailingSqlDriver(private val delegate: SqlDriver) : SqlDriver by 
         parameters: Int,
         binders: (SqlPreparedStatement.() -> Unit)?,
     ): QueryResult<Long> {
-        if (sql.startsWith("INSERT INTO chapters") || sql.startsWith("INSERT INTO episodes")) {
+        if (sql.startsWith("INSERT INTO chapter(") || sql.startsWith("INSERT INTO episode(")) {
             insertFailure?.let { throw it }
         }
         return delegate.execute(identifier, sql, parameters, binders)

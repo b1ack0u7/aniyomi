@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS download_queue_alias(
+    old_parent_id INTEGER NOT NULL,
+    old_item_id INTEGER NOT NULL,
+    item_id INTEGER,
+    PRIMARY KEY(old_parent_id, old_item_id),
+    FOREIGN KEY(item_id) REFERENCES chapter (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS download_queue_alias_item_id_index ON download_queue_alias(item_id);

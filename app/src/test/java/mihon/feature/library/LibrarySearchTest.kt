@@ -27,7 +27,7 @@ class LibrarySearchTest {
                 dateAdded = added,
                 fetchInterval = -7,
             ),
-            0,
+            listOf(0),
             12,
             3,
             0,
@@ -49,7 +49,7 @@ class LibrarySearchTest {
                 dateAdded = added,
                 fetchInterval = -7,
             ),
-            0, 12, 3, 0, 0, 0, 0, 0,
+            listOf(0), 12, 3, 0, 0, 0, 0, 0,
         )
         every { sourceName } returns "Example Source"
         every { sourceLang } returns "es"

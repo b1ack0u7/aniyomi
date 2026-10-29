@@ -2,17 +2,15 @@ package eu.kanade.tachiyomi.di
 
 import android.app.Application
 import android.os.Build
-import androidx.core.content.ContextCompat
-import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import aniyomi.core.common.torrent.TorrentServerApi
 import aniyomi.core.common.torrent.TorrentServerUtils
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
-import data.Chapters
+import data.Chapter
 import data.History
-import data.Mangas
-import dataanime.Animehistory
-import dataanime.Animes
+import data.Manga
+import dataanime.Anime
+import dataanime.Anime_history
 import eu.kanade.domain.track.anime.store.DelayedAnimeTrackingStore
 import eu.kanade.domain.track.manga.store.DelayedMangaTrackingStore
 import eu.kanade.tachiyomi.BuildConfig
@@ -40,8 +38,15 @@ import eu.kanade.tachiyomi.source.anime.AndroidAnimeSourceManager
 import eu.kanade.tachiyomi.source.manga.AndroidMangaSourceManager
 import eu.kanade.tachiyomi.ui.player.ExternalIntents
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
+import mihon.core.database.DatabaseInitializer
+import mihon.core.database.DatabaseKind
+import mihon.core.database.DatabaseMigrationCallback
 import nl.adaptivity.xmlutil.XmlDeclMode.Charset
 import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
@@ -79,6 +84,8 @@ class AppModule(val app: Application) : InjektModule {
     override fun InjektRegistrar.registerInjectables() {
         addSingleton(app)
 
+        lateinit var databaseInitializer: DatabaseInitializer
+
         val sqlDriverManga = AndroidSqliteDriver(
             schema = Database.Schema,
             context = app,
@@ -89,19 +96,7 @@ class AppModule(val app: Application) : InjektModule {
             } else {
                 RequerySQLiteOpenHelperFactory()
             },
-            callback = object : AndroidSqliteDriver.Callback(Database.Schema) {
-                override fun onOpen(db: SupportSQLiteDatabase) {
-                    super.onOpen(db)
-                    setPragma(db, "foreign_keys = ON")
-                    setPragma(db, "journal_mode = WAL")
-                    setPragma(db, "synchronous = NORMAL")
-                }
-                private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
-                    val cursor = db.query("PRAGMA $pragma")
-                    cursor.moveToFirst()
-                    cursor.close()
-                }
-            },
+            callback = DatabaseMigrationCallback(Database.Schema, DatabaseKind.Manga) { databaseInitializer },
         )
 
         val sqlDriverAnime = AndroidSqliteDriver(
@@ -114,20 +109,14 @@ class AppModule(val app: Application) : InjektModule {
             } else {
                 RequerySQLiteOpenHelperFactory()
             },
-            callback = object : AndroidSqliteDriver.Callback(AnimeDatabase.Schema) {
-                override fun onOpen(db: SupportSQLiteDatabase) {
-                    super.onOpen(db)
-                    setPragma(db, "foreign_keys = ON")
-                    setPragma(db, "journal_mode = WAL")
-                    setPragma(db, "synchronous = NORMAL")
-                }
-                private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
-                    val cursor = db.query("PRAGMA $pragma")
-                    cursor.moveToFirst()
-                    cursor.close()
-                }
-            },
+            callback = DatabaseMigrationCallback(AnimeDatabase.Schema, DatabaseKind.Anime) { databaseInitializer },
         )
+
+        databaseInitializer = DatabaseInitializer(
+            openManga = { sqlDriverManga.executeQuery(null, "PRAGMA user_version", { it.next() }, 0) },
+            openAnime = { sqlDriverAnime.executeQuery(null, "PRAGMA user_version", { it.next() }, 0) },
+        )
+        addSingleton(databaseInitializer)
 
         addSingletonFactory {
             Database(
@@ -135,13 +124,13 @@ class AppModule(val app: Application) : InjektModule {
                 historyAdapter = History.Adapter(
                     last_readAdapter = DateColumnAdapter,
                 ),
-                mangasAdapter = Mangas.Adapter(
-                    genreAdapter = StringListColumnAdapter,
-                    update_strategyAdapter = MangaUpdateStrategyColumnAdapter,
-                    memoAdapter = MemoColumnAdapter,
+                mangaAdapter = Manga.Adapter(
+                    remote_genreAdapter = StringListColumnAdapter,
+                    remote_update_strategyAdapter = MangaUpdateStrategyColumnAdapter,
+                    remote_memoAdapter = MemoColumnAdapter,
                 ),
-                chaptersAdapter = Chapters.Adapter(
-                    memoAdapter = MemoColumnAdapter,
+                chapterAdapter = Chapter.Adapter(
+                    remote_memoAdapter = MemoColumnAdapter,
                 ),
             )
         }
@@ -149,13 +138,13 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory {
             AnimeDatabase(
                 driver = sqlDriverAnime,
-                animehistoryAdapter = Animehistory.Adapter(
+                anime_historyAdapter = Anime_history.Adapter(
                     last_seenAdapter = DateColumnAdapter,
                 ),
-                animesAdapter = Animes.Adapter(
-                    genreAdapter = StringListColumnAdapter,
-                    update_strategyAdapter = AnimeUpdateStrategyColumnAdapter,
-                    fetch_typeAdapter = FetchTypeColumnAdapter,
+                animeAdapter = Anime.Adapter(
+                    remote_genreAdapter = StringListColumnAdapter,
+                    remote_update_strategyAdapter = AnimeUpdateStrategyColumnAdapter,
+                    remote_fetch_typeAdapter = FetchTypeColumnAdapter,
                 ),
             )
         }
@@ -164,6 +153,7 @@ class AppModule(val app: Application) : InjektModule {
             AndroidMangaDatabaseHandler(
                 get(),
                 sqlDriverManga,
+                awaitReady = databaseInitializer::awaitReady,
             )
         }
 
@@ -171,6 +161,7 @@ class AppModule(val app: Application) : InjektModule {
             AndroidAnimeDatabaseHandler(
                 get(),
                 sqlDriverAnime,
+                awaitReady = databaseInitializer::awaitReady,
             )
         }
 
@@ -253,8 +244,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { AnimeSearchFallbackEngine() }
         addSingletonFactory { MangaSearchFallbackEngine() }
 
-        // Asynchronously init expensive components for a faster cold start
-        ContextCompat.getMainExecutor(app).execute {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            databaseInitializer.awaitReady()
             get<NetworkHelper>()
 
             get<MangaSourceManager>()

@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.core.database.DatabaseInitializer
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.entries.anime.interactor.GetLibraryAnime
@@ -38,23 +39,25 @@ import tachiyomi.domain.library.anime.LibraryAnime
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class AnimeMetadataUpdateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
 
-    private val sourceManager: AnimeSourceManager = Injekt.get()
-    private val coverCache: AnimeCoverCache = Injekt.get()
-    private val backgroundCache: AnimeBackgroundCache = Injekt.get()
-    private val getLibraryAnime: GetLibraryAnime = Injekt.get()
-    private val updateAnime: UpdateAnime = Injekt.get()
+    private val sourceManager: AnimeSourceManager by injectLazy()
+    private val coverCache: AnimeCoverCache by injectLazy()
+    private val backgroundCache: AnimeBackgroundCache by injectLazy()
+    private val getLibraryAnime: GetLibraryAnime by injectLazy()
+    private val updateAnime: UpdateAnime by injectLazy()
 
-    private val notifier = AnimeLibraryUpdateNotifier(context)
+    private val notifier by lazy { AnimeLibraryUpdateNotifier(context) }
 
     private var animeToUpdate: List<LibraryAnime> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (!Injekt.get<DatabaseInitializer>().awaitReadyOrFailure()) return Result.retry()
         sourceManager.isInitialized.first { it }
         try {
             setForeground(getForegroundInfo())

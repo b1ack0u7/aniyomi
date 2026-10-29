@@ -1,7 +1,6 @@
 package mihon.core.migration.migrations
 
 import android.app.Application
-import android.content.Context
 import androidx.core.content.edit
 import androidx.preference.PreferenceManager
 import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
@@ -33,15 +32,6 @@ class MovePlayerPreferencesMigration : Migration {
                     } ?: return@edit
                     val newInt = oldString.toIntOrNull() ?: return@edit
                     putInt(pref.key(), newInt)
-                }
-                val trackingQueuePref =
-                    context.getSharedPreferences("tracking_queue", Context.MODE_PRIVATE)
-                trackingQueuePref.all.forEach {
-                    val (_, lastChapterRead) = it.value.toString().split(":")
-                    trackingQueuePref.edit {
-                        remove(it.key)
-                        putFloat(it.key, lastChapterRead.toFloat())
-                    }
                 }
             }
         }

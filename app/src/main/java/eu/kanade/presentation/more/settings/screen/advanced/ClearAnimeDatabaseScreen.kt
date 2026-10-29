@@ -291,9 +291,9 @@ private class ClearAnimeDatabaseScreenModel : StateScreenModel<ClearAnimeDatabas
         val orphaned = selected.flatMap { it.orphaned }
             .filterNot { it in animeIds }
 
-        database.animesQueries.deleteAnimesNotInLibraryByAnimeIds(animeIds)
-        database.animesQueries.removeParentIdByIds(orphaned)
-        database.animehistoryQueries.removeResettedHistory()
+        database.animeQueries.deleteAnimesNotInLibraryByAnimeIds(animeIds)
+        database.animeQueries.removeParentIdByIds(orphaned)
+        database.anime_historyQueries.removeResettedHistory()
     }
 
     fun toggleSelection(source: AnimeSource) = mutableState.update { state ->

@@ -1,24 +1,24 @@
 CREATE VIEW updatesView AS
 SELECT
-    mangas._id AS mangaId,
-    mangas.title AS mangaTitle,
-    chapters._id AS chapterId,
-    chapters.name AS chapterName,
-    chapters.scanlator,
-    chapters.read,
-    chapters.bookmark,
-    chapters.last_page_read,
-    mangas.source,
-    mangas.favorite,
-    mangas.thumbnail_url AS thumbnailUrl,
-    mangas.cover_last_modified AS coverLastModified,
-    chapters.date_upload AS dateUpload,
-    chapters.date_fetch AS datefetch
-FROM mangas JOIN chapters
-ON mangas._id = chapters.manga_id
+    manga.id AS mangaId,
+    manga.remote_title AS mangaTitle,
+    chapter.id AS chapterId,
+    chapter.remote_name AS chapterName,
+    chapter.remote_scanlator AS scanlator,
+    chapter.user_read AS read,
+    chapter.user_bookmark AS bookmark,
+    chapter.user_last_page_read AS last_page_read,
+    manga.source_id AS source,
+    manga.favorite AS favorite,
+    manga.remote_cover AS thumbnailUrl,
+    manga.state_cover_last_modified AS coverLastModified,
+    chapter.remote_date_upload AS dateUpload,
+    chapter.state_date_fetch AS datefetch
+FROM manga JOIN chapter
+ON manga.id = chapter.manga_id
 WHERE favorite = 1
-AND date_fetch > date_added
-ORDER BY date_fetch DESC;
+AND state_date_fetch > date_added
+ORDER BY state_date_fetch DESC;
 
 getRecentUpdates:
 SELECT *

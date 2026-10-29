@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.core.database.DatabaseInitializer
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.entries.manga.interactor.GetLibraryManga
@@ -36,22 +37,24 @@ import tachiyomi.domain.library.manga.LibraryManga
 import tachiyomi.domain.source.manga.service.MangaSourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class MangaMetadataUpdateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
 
-    private val sourceManager: MangaSourceManager = Injekt.get()
-    private val coverCache: MangaCoverCache = Injekt.get()
-    private val getLibraryManga: GetLibraryManga = Injekt.get()
-    private val updateManga: UpdateManga = Injekt.get()
+    private val sourceManager: MangaSourceManager by injectLazy()
+    private val coverCache: MangaCoverCache by injectLazy()
+    private val getLibraryManga: GetLibraryManga by injectLazy()
+    private val updateManga: UpdateManga by injectLazy()
 
-    private val notifier = MangaLibraryUpdateNotifier(context)
+    private val notifier by lazy { MangaLibraryUpdateNotifier(context) }
 
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (!Injekt.get<DatabaseInitializer>().awaitReadyOrFailure()) return Result.retry()
         sourceManager.isInitialized.first { it }
         try {
             setForeground(getForegroundInfo())

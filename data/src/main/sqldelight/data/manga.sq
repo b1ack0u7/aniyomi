@@ -1,0 +1,207 @@
+import eu.kanade.tachiyomi.source.model.UpdateStrategy;
+import kotlin.Boolean;
+import kotlin.String;
+import kotlin.collections.List;
+import kotlinx.serialization.json.JsonObject;
+
+CREATE TABLE manga(
+    id INTEGER NOT NULL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_artist TEXT,
+    remote_author TEXT,
+    remote_description TEXT,
+    remote_genre TEXT AS List<String>,
+    remote_title TEXT NOT NULL,
+    remote_status INTEGER NOT NULL,
+    remote_cover TEXT,
+    favorite INTEGER AS Boolean NOT NULL,
+    state_last_update INTEGER,
+    state_next_update INTEGER,
+    state_initialized INTEGER AS Boolean NOT NULL,
+    user_viewer INTEGER NOT NULL,
+    user_chapter_flags INTEGER NOT NULL,
+    state_cover_last_modified INTEGER NOT NULL,
+    date_added INTEGER NOT NULL,
+    remote_update_strategy INTEGER AS UpdateStrategy NOT NULL DEFAULT 0,
+    state_fetch_interval INTEGER DEFAULT 0 NOT NULL,
+    last_modified_at INTEGER NOT NULL DEFAULT 0,
+    favorite_modified_at INTEGER,
+    version INTEGER NOT NULL DEFAULT 0,
+    is_syncing INTEGER NOT NULL DEFAULT 0,
+    remote_memo BLOB AS JsonObject NOT NULL DEFAULT (CAST('{}' AS BLOB)),
+    UNIQUE(source_id, remote_url)
+);
+
+CREATE INDEX library_favorite_index ON manga(favorite) WHERE favorite = 1;
+CREATE INDEX mangas_url_index ON manga(remote_url);
+
+CREATE TRIGGER update_last_favorite_at_mangas
+AFTER UPDATE OF favorite ON manga
+BEGIN
+  UPDATE manga
+  SET favorite_modified_at = strftime('%s', 'now')
+  WHERE id = new.id;
+END;
+
+CREATE TRIGGER update_last_modified_at_mangas
+AFTER UPDATE ON manga
+FOR EACH ROW
+BEGIN
+  UPDATE manga
+  SET last_modified_at = strftime('%s', 'now')
+  WHERE id = new.id;
+END;
+
+CREATE TRIGGER update_manga_version AFTER UPDATE ON manga
+BEGIN
+    UPDATE manga SET version = version + 1
+    WHERE id = new.id AND new.is_syncing = 0 AND (
+        new.remote_url != old.remote_url OR
+        new.remote_description != old.remote_description OR
+        new.favorite != old.favorite
+    );
+END;
+
+getMangaById:
+SELECT *
+FROM manga
+WHERE id = :id;
+
+getMangaByUrlAndSource:
+SELECT *
+FROM manga
+WHERE remote_url = :url
+AND source_id = :source
+;
+
+getFavorites:
+SELECT *
+FROM manga
+WHERE favorite = 1;
+
+getReadMangaNotInLibrary:
+SELECT *
+FROM manga
+WHERE favorite = 0 AND id IN (
+    SELECT DISTINCT chapter.manga_id
+    FROM chapter
+    WHERE user_read = 1 OR user_last_page_read != 0
+);
+
+getBackupMangaBatch:
+SELECT *
+FROM manga
+WHERE id > :afterId AND id <= :upToId
+AND (favorite = 1 OR (:includeReadEntries = 1 AND EXISTS (
+    SELECT 1 FROM chapter
+    WHERE manga_id = manga.id AND (
+        user_read = 1 OR user_last_page_read != 0 OR EXISTS (
+            SELECT 1 FROM history WHERE chapter_id = chapter.id
+        )
+    )
+)))
+ORDER BY id
+LIMIT :limit;
+
+getAllManga:
+SELECT *
+FROM manga;
+
+getAllMangaSourceAndUrl:
+SELECT source_id AS source, remote_url AS url
+FROM manga;
+
+getMangasWithFavoriteTimestamp:
+SELECT *
+FROM manga
+WHERE favorite_modified_at IS NOT NULL;
+
+getSourceIdWithFavoriteCount:
+SELECT
+source_id,
+count(*)
+FROM manga
+WHERE favorite = 1
+GROUP BY source_id;
+
+getFavoriteBySourceId:
+SELECT *
+FROM manga
+WHERE favorite = 1
+AND source_id = :sourceId;
+
+getDuplicateLibraryManga:
+SELECT *
+FROM manga
+WHERE favorite = 1
+AND LOWER(remote_title) = :title
+AND id != :id;
+
+getUpcomingManga:
+SELECT *
+FROM manga
+WHERE state_next_update >= :startOfDay
+AND favorite = 1
+AND remote_status IN :statuses
+ORDER BY state_next_update ASC;
+
+resetViewerFlags:
+UPDATE manga
+SET user_viewer = 0;
+
+resetIsSyncing:
+UPDATE manga
+SET is_syncing = 0
+WHERE is_syncing = 1;
+
+getSourceIdsWithNonLibraryManga:
+SELECT source_id, COUNT(*) AS manga_count
+FROM manga
+WHERE favorite = 0
+GROUP BY source_id;
+
+deleteMangasNotInLibraryBySourceIds:
+DELETE FROM manga
+WHERE favorite = 0
+AND source_id IN :sourceIds;
+
+insert:
+INSERT INTO manga(source_id, remote_url, remote_artist, remote_author, remote_description, remote_genre, remote_title, remote_status, remote_cover, favorite, state_last_update, state_next_update, state_initialized, user_viewer, user_chapter_flags, state_cover_last_modified, date_added, remote_update_strategy, state_fetch_interval, last_modified_at, version, remote_memo)
+VALUES (:source, :url, :artist, :author, :description, :genre, :title, :status, :thumbnailUrl, :favorite, :lastUpdate, :nextUpdate, :initialized, :viewerFlags, :chapterFlags, :coverLastModified, :dateAdded, :updateStrategy, :calculateInterval, 0, :version, :memo)
+ON CONFLICT(source_id, remote_url) DO NOTHING;
+
+update:
+UPDATE manga SET
+    source_id = coalesce(:source, source_id),
+    remote_url = coalesce(:url, remote_url),
+    remote_artist = coalesce(:artist, remote_artist),
+    remote_author = coalesce(:author, remote_author),
+    remote_description = coalesce(:description, remote_description),
+    remote_genre = coalesce(:genre, remote_genre),
+    remote_title = coalesce(:title, remote_title),
+    remote_status = coalesce(:status, remote_status),
+    remote_cover = coalesce(:thumbnailUrl, remote_cover),
+    favorite = coalesce(:favorite, favorite),
+    state_last_update = coalesce(:lastUpdate, state_last_update),
+    state_next_update = coalesce(:nextUpdate, state_next_update),
+    state_initialized = coalesce(:initialized, state_initialized),
+    user_viewer = coalesce(:viewer, user_viewer),
+    user_chapter_flags = coalesce(:chapterFlags, user_chapter_flags),
+    state_cover_last_modified = coalesce(:coverLastModified, state_cover_last_modified),
+    date_added = coalesce(:dateAdded, date_added),
+    remote_update_strategy = coalesce(:updateStrategy, remote_update_strategy),
+    state_fetch_interval = coalesce(:calculateInterval, state_fetch_interval),
+    version = coalesce(:version, version),
+    is_syncing = coalesce(:isSyncing, is_syncing),
+    remote_memo = coalesce(:memo, remote_memo)
+WHERE id = :mangaId;
+
+selectLastInsertedRowId:
+SELECT last_insert_rowid();
+getMaxMangaId:
+SELECT coalesce(max(id), 0) FROM manga;
+
+getExistingId:
+SELECT id FROM manga
+WHERE source_id = :source AND remote_url = :url;

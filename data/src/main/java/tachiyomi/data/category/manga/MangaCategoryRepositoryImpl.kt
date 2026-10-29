@@ -12,52 +12,52 @@ class MangaCategoryRepositoryImpl(
 ) : MangaCategoryRepository {
 
     override suspend fun getMangaCategory(id: Long): Category? {
-        return handler.awaitOneOrNull { categoriesQueries.getCategory(id, ::mapCategory) }
+        return handler.awaitOneOrNull { categoryQueries.getCategory(id, ::mapCategory) }
     }
 
     override suspend fun getAllMangaCategories(): List<Category> {
-        return handler.awaitList { categoriesQueries.getCategories(::mapCategory) }
+        return handler.awaitList { categoryQueries.getCategories(::mapCategory) }
     }
 
     override suspend fun getAllVisibleMangaCategories(): List<Category> {
-        return handler.awaitList { categoriesQueries.getVisibleCategories(::mapCategory) }
+        return handler.awaitList { categoryQueries.getVisibleCategories(::mapCategory) }
     }
 
     override fun getAllMangaCategoriesAsFlow(): Flow<List<Category>> {
-        return handler.subscribeToList { categoriesQueries.getCategories(::mapCategory) }
+        return handler.subscribeToList { categoryQueries.getCategories(::mapCategory) }
     }
 
     override fun getAllVisibleMangaCategoriesAsFlow(): Flow<List<Category>> {
-        return handler.subscribeToList { categoriesQueries.getVisibleCategories(::mapCategory) }
+        return handler.subscribeToList { categoryQueries.getVisibleCategories(::mapCategory) }
     }
 
     override suspend fun getCategoriesByMangaId(mangaId: Long): List<Category> {
         return handler.awaitList {
-            categoriesQueries.getCategoriesByMangaId(mangaId, ::mapCategory)
+            categoryQueries.getCategoriesByMangaId(mangaId, ::mapCategory)
         }
     }
 
     override suspend fun getVisibleCategoriesByMangaId(mangaId: Long): List<Category> {
         return handler.awaitList {
-            categoriesQueries.getVisibleCategoriesByMangaId(mangaId, ::mapCategory)
+            categoryQueries.getVisibleCategoriesByMangaId(mangaId, ::mapCategory)
         }
     }
 
     override fun getCategoriesByMangaIdAsFlow(mangaId: Long): Flow<List<Category>> {
         return handler.subscribeToList {
-            categoriesQueries.getCategoriesByMangaId(mangaId, ::mapCategory)
+            categoryQueries.getCategoriesByMangaId(mangaId, ::mapCategory)
         }
     }
 
     override fun getVisibleCategoriesByMangaIdAsFlow(mangaId: Long): Flow<List<Category>> {
         return handler.subscribeToList {
-            categoriesQueries.getVisibleCategoriesByMangaId(mangaId, ::mapCategory)
+            categoryQueries.getVisibleCategoriesByMangaId(mangaId, ::mapCategory)
         }
     }
 
     override suspend fun insertMangaCategory(category: Category) {
         handler.await {
-            categoriesQueries.insert(
+            categoryQueries.insert(
                 name = category.name,
                 order = category.order,
                 flags = category.flags,
@@ -80,7 +80,7 @@ class MangaCategoryRepositoryImpl(
     }
 
     private fun Database.updatePartialBlocking(update: CategoryUpdate) {
-        categoriesQueries.update(
+        categoryQueries.update(
             name = update.name,
             order = update.order,
             flags = update.flags,
@@ -91,13 +91,13 @@ class MangaCategoryRepositoryImpl(
 
     override suspend fun updateAllMangaCategoryFlags(flags: Long?) {
         handler.await {
-            categoriesQueries.updateAllFlags(flags)
+            categoryQueries.updateAllFlags(flags)
         }
     }
 
     override suspend fun deleteMangaCategory(categoryId: Long) {
         handler.await {
-            categoriesQueries.delete(
+            categoryQueries.delete(
                 categoryId = categoryId,
             )
         }

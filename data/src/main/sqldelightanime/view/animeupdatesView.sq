@@ -1,26 +1,26 @@
 CREATE VIEW animeupdatesView AS
 SELECT
-    animes._id AS animeId,
-    animes.title AS animeTitle,
-    episodes._id AS episodeId,
-    episodes.name AS episodeName,
-    episodes.scanlator,
-    episodes.seen,
-    episodes.bookmark,
-    episodes.fillermark,
-    episodes.last_second_seen,
-    episodes.total_seconds AS totalSeconds,
-    animes.source,
-    animes.favorite,
-    animes.thumbnail_url AS thumbnailUrl,
-    animes.cover_last_modified AS coverLastModified,
-    episodes.date_upload AS dateUpload,
-    episodes.date_fetch AS datefetch
-FROM animes JOIN episodes
-ON animes._id = episodes.anime_id
+    anime.id AS animeId,
+    anime.remote_title AS animeTitle,
+    episode.id AS episodeId,
+    episode.remote_name AS episodeName,
+    episode.remote_scanlator AS scanlator,
+    episode.user_seen AS seen,
+    episode.user_bookmark AS bookmark,
+    episode.user_fillermark AS fillermark,
+    episode.user_last_second_seen AS last_second_seen,
+    episode.remote_total_seconds AS totalSeconds,
+    anime.source_id AS source,
+    anime.favorite AS favorite,
+    anime.remote_cover AS thumbnailUrl,
+    anime.state_cover_last_modified AS coverLastModified,
+    episode.remote_date_upload AS dateUpload,
+    episode.state_date_fetch AS datefetch
+FROM anime JOIN episode
+ON anime.id = episode.anime_id
 WHERE favorite = 1
-AND date_fetch > date_added
-ORDER BY date_fetch DESC;
+AND state_date_fetch > date_added
+ORDER BY state_date_fetch DESC;
 
 getRecentAnimeUpdates:
 SELECT *

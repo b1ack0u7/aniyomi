@@ -10,20 +10,14 @@ class NetworkToLocalAnime(
 ) {
 
     suspend fun await(anime: Anime): Anime {
-        val localAnime = getAnime(anime.url, anime.source)
-        return when {
-            localAnime == null -> {
-                val id = insertAnime(anime)
-                anime.copy(id = id!!)
-            }
-            !localAnime.favorite -> {
-                // if the anime isn't a favorite, set its display title from source
-                // if it later becomes a favorite, updated title will go to db
-                localAnime.copy(title = anime.title)
-            }
-            else -> {
-                localAnime
-            }
+        val localAnime = getAnime(anime.url, anime.source) ?: run {
+            val id = requireNotNull(insertAnime(anime))
+            animeRepository.getAnimeById(id)
+        }
+        return if (localAnime.favorite) {
+            localAnime
+        } else {
+            localAnime.copy(title = anime.title)
         }
     }
 

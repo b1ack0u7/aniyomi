@@ -209,7 +209,7 @@ private class ClearDatabaseScreenModel : StateScreenModel<ClearDatabaseScreenMod
 
     suspend fun removeMangaBySourceId() = withNonCancellableContext {
         val state = state.value as? State.Ready ?: return@withNonCancellableContext
-        database.mangasQueries.deleteMangasNotInLibraryBySourceIds(state.selection)
+        database.mangaQueries.deleteMangasNotInLibraryBySourceIds(state.selection)
         database.historyQueries.removeResettedHistory()
     }
 

@@ -424,13 +424,12 @@ no se realizó una restauración completa de un backup real en este recorrido.
 
 ## 3. Proyectos independientes — evaluar después
 
-- [ ] **Base de datos y consultas de bibliotecas grandes:**
+- [x] **Base de datos y consultas de bibliotecas grandes:**
   [PR #3805](https://github.com/mihonapp/mihon/pull/3805) y
   [PR #4022](https://github.com/mihonapp/mihon/pull/4022).
-  Mihon reestructuró esquema y fusionó duplicados. Adaptar dos bases y dos
-  secuencias de migraciones; incluir las correcciones posteriores a esa migración.
-  No importar reparaciones de problemas introducidos por ese esquema si el esquema
-  nuevo no se adopta.
+  Esquema, deduplicación y consultas adaptados a ambas bases, con las correcciones
+  posteriores y conservación de datos propios. Validación automática, mediciones
+  y pruebas Android aisladas registradas abajo.
 - [x] **Backups por streaming:**
   [771ba33a3](https://github.com/mihonapp/mihon/commit/771ba33a3).
   Creación por lotes, validación progresiva y restauración mediante caché temporal
@@ -448,6 +447,237 @@ no se realizó una restauración completa de un backup real en este recorrido.
   Renderer experimental y decoder diferente: evaluar en otro proyecto. No forman
   parte de la corrección del webtoon actual ni requieren cambiar sus dependencias.
   Probar GPU, memoria, imágenes animadas, orientación, color y Android antiguos.
+
+### Adaptación de base de datos y bibliotecas grandes — 2026-10-27
+
+Referencias: esquema `93cc07511628961e5e8b6c57053f5f7f511a63d3` (#3805),
+consultas `2d1d2e4cabc404461b3346b31b71c16cbca3be7b` (#4022), correcciones
+`a999e49f`, `9dbb7148` y `ea2b73ad`, última lectura `5df78e30` y pantalla de
+migración `fd4f73c9`. Se revisó el snapshot local `d001e6f2`; la consulta de GitHub
+confirmó `main` en `e588e04359fe1058206a2cbac1b01018ad787359` del 26 de octubre.
+No se importan cambios ajenos de driver SQLite, DI, Instant ni API de extensiones.
+
+- **Esquema:** migraciones nuevas `34.sqm` (manga, versión 34 → 35) y `136.sqm`
+  (anime, 136 → 137). Tablas singulares, columnas remotas/de usuario/de estado e
+  identidades y pertenencias únicas. Se mantienen los nombres de archivos y las
+  dos bases, `favorite`/`date_added`, versiones, sincronización y triggers propios,
+  categorías ocultas, memos, fondos, temporadas, segundos vistos, duración total,
+  resumen, preview, filler y botones. Los campos de backup y ProtoNumbers no cambian.
+- **Fusión:** identidad exacta fuente/URL; favorito y menor ID determinan el
+  superviviente. Conserva ajustes, incluidos ceros, y completa detalles nulos.
+  Ítems prefieren historial y menor ID; se unen progreso y marcadores. Historial
+  agrega una sola vez las filas originales: última fecha máxima y suma de duración
+  solo en manga. El caso `10 + 20 + 30` conserva `60`, evitando el doble conteo del
+  SQL upstream. Trackers eligen una fila completa por servicio, priorizando favorito,
+  progreso y precedencia; las pertenencias unen copias favoritas.
+- **Integridad:** copia explícita `NOT INDEXED`, índices temporales y reconstrucción
+  de constraints permiten recuperar duplicados pese a restricciones antiguas.
+  Se descartan relaciones huérfanas. Todos los padres anime se remapean; padres
+  inexistentes pasan a nulo. Tipos incompatibles, padres válidos distintos o ciclos
+  abortan esa transacción con diagnóstico. El recorrido desde raíces evita el
+  cierre transitivo cuadrático; se prueba una cadena de 10.000 títulos.
+- **Memos:** la migración normaliza texto/BLOB a BLOB y las tablas nuevas usan un
+  predeterminado binario. En Android, `Cursor.getBlob` sobre el texto `'{}'` podía
+  devolver un byte nulo extra que rechazaba el decoder JSON; el emulador reprodujo
+  el defecto en framework y Requery antes de corregirlo.
+- **Consultas y UI:** una fila por título con `categories: List<Long>`; la categoría
+  visible permanece en el elemento de presentación para seleccionar rangos.
+  Jobs, estadísticas y almacenamiento usan pertenencia/intersección, con exclusión
+  dominante. Manga agrega favoritos; anime agrega favoritos e hijos relevantes sin
+  limitar las vistas generales de temporadas ni cambiar la regla de temporadas
+  vacías. Última lectura se consulta por separado. SQLDelight 2.0.2 requiere vistas
+  auxiliares anime y mapas temporales explícitos para generar el SQL correctamente.
+- **Escrituras y arranque:** inserción por identidad devuelve la fila persistida
+  real, también bajo concurrencia; trackers se actualizan sin reemplazar su ID.
+  Restauración busca historial por título y URL. Un coordinador Injekt abre ambas
+  bases en IO; widgets, calentamiento y migraciones de preferencias esperan su
+  apertura. MainActivity muestra progreso o error copiable con reintento. No borra
+  bases fallidas ni promete atomicidad entre los dos archivos.
+
+Validación automatizada:
+
+- `./gradlew spotlessCheck testReleaseUnitTest :app:assembleDebug --continue`:
+  correcto, **692 pruebas** sin fallos, errores ni omitidas (501 app, 56 data,
+  96 domain y 39 core/common).
+- Cobertura: esquema nuevo frente a migrado, campos completos sin duplicados,
+  memos binarios, historia duplicada, categorías, trackers, huérfanos, conflictos
+  de temporadas, rollback/reintento, triggers, emisiones SQLDelight y carreras de
+  ocho inserciones. Incluye regresiones existentes de backups modernos/legacy,
+  creación por lotes y streaming, sin cambios de formato.
+- Las primeras ejecuciones detectaron reescrituras incorrectas de SQLDelight al
+  expandir `SELECT *` histórico o aliases de ventanas; las migraciones usan listas
+  explícitas y ventanas sin alias. Se corrigieron fixtures de versión alterada por
+  triggers y el prefijo del driver que inyecta cancelaciones tras renombrar tablas.
+- Checker de alineación: 15 regresiones correctas. `git diff --check`: correcto.
+  Sin dependencias nativas nuevas. Cambios sin stage ni commits.
+
+Medición local con SQLite 3.51.2 en memoria, dos calentamientos y mediana de cinco
+lecturas completas. El 10 % de títulos son favoritos, con dos categorías; anime
+incluye padres favoritos con hijos fuera de biblioteca. Conteos, progreso, fechas,
+marcadores, filler y categorías coinciden antes/después; integridad y FKs correctas.
+
+| Pila | Títulos / ítems | Antes | Después | Migración |
+| --- | --- | --- | --- | --- |
+| Manga | 1.000 / 50.000 | 8,55 ms | 1,28 ms | 349 ms |
+| Manga | 10.000 / 500.000 | 89,43 ms | 14,09 ms | 3.875 ms |
+| Anime | 1.000 / 50.000 | 17,19 ms | 2,11 ms | 523 ms |
+| Anime | 10.000 / 500.000 | 180,68 ms | 23,74 ms | 5.377 ms |
+
+Los planes SQL usan índices por identidad, título y pertenencias; los agregados de
+biblioteca se restringen al conjunto relevante. Son fixtures sintéticos, no una
+promesa de latencia de interfaz, ahorro de RAM o porcentaje universal. Evidencia
+local de tiempos y planes: `/tmp/aniyomi-db-benchmark.json`.
+
+Validación Android de bases (`emulator-5554`, SDK 36, páginas de 16 KB):
+
+- APK debug x86_64 SHA-256
+  `1cca19a55ec0d2dadcb61934da48bad8999250183fc4cb2a629bf8297985e54d`.
+  Un harness independiente incorpora sus componentes reales y usa Application
+  vacía y bases privadas propias; no abre ni migra las bases reales del usuario.
+- **296 comprobaciones correctas**, sin fallos, con framework SQLite y Requery:
+  instalación nueva, migración, deduplicación, duración `60`, campos y categorías,
+  queries generadas, temporadas fuera de biblioteca y rechazo de cuatro conflictos
+  estructurales. Callback real de producción con foreign keys desactivadas antes
+  del upgrade y activadas al abrir; rollback y estado de error comprobados.
+- Perfiles de 1.000/50.000 y 10.000/500.000 títulos/ítems por pila, 10 % favoritos,
+  dos categorías por favorito y padres anime con hijos fuera de biblioteca. Dos
+  calentamientos, cinco repeticiones, resultados semánticos equivalentes y planes
+  registrados. Para el perfil grande:
+
+| Driver | Pila | Antes | Después | Migración |
+| --- | --- | --- | --- | --- |
+| Framework | Manga | 70,45 ms | 16,75 ms | 5.533 ms |
+| Framework | Anime | 140,33 ms | 24,18 ms | 7.307 ms |
+| Requery | Manga | 108,95 ms | 23,01 ms | 5.396 ms |
+| Requery | Anime | 242,86 ms | 28,48 ms | 5.976 ms |
+
+La prueba inicial de Requery exigió alinear el APK del harness a 16 KB e instalar
+sin modo incremental; no se cambiaron librerías nativas de producción. Durante la
+preparación el proceso del emulador desapareció; se relanzó el AVD sin borrar datos.
+No se determinó la causa. La matriz final se ejecutó después de recuperarlo.
+Evidencia: `/tmp/aniyomi-db-qa/result-final.txt`.
+
+Round-trip Android de payloads de backup:
+
+- **74 comprobaciones correctas**, sin fallos, con ambos drivers. Los creadores
+  reales recorren tres lotes de 205 manga y 207 anime (incluidos padre e hijo).
+  Los restauradores reales reciben dependencias explícitas de bases aisladas y
+  restauran dos veces para comprobar idempotencia.
+- Se conservan progreso, marcadores, filler, resumen, preview, trackers, categorías
+  por nombre, exclusiones, historial y duración acumulada `211150`, además de
+  padre remapeado, fondo y flags de temporadas. Evidencia:
+  `/tmp/aniyomi-db-qa/result-backup.txt`.
+- Este recorrido prueba creadores y restauradores de payloads, sin selector SAF,
+  WorkManager ni contenedores gzip/legacy completos en Android. Esos formatos
+  conservan su cobertura unitaria existente; no se modificó su serialización.
+
+Validación visual y límites Android:
+
+- **8 comprobaciones correctas** sobre `DatabaseInitializationScreen` real en una
+  Activity aislada: diagnóstico y base visibles, acciones de copiar y reintentar,
+  contenido del clipboard y transición al indicador de progreso. Capturas de error
+  y progreso revisadas visualmente. El aviso Android de compatibilidad de 16 KB
+  del harness se descartó para poder interactuar con su Activity.
+- Total: **378 comprobaciones Android** (296 bases, 74 backups, 8 UI), sin fallos
+  finales. En esta primera matriz no se automatizó MainActivity completa, la
+  navegación de biblioteca o restauración desde el selector de archivos. Esos
+  recorridos se amplían en la continuación con la app real. Se usó un único emulador SDK 36;
+  no se midieron FPS, memoria máxima ni dispositivos físicos/Android antiguos.
+- Bases y preferencias reales de la app conservadas. Harness y datos privados de
+  prueba retirados al terminar; emulador operativo. Reporte seguro:
+  `/tmp/aniyomi-db-qa/QA-REPORT.md`. Las capturas quedan en ese directorio.
+- La pantalla informa los conflictos estructurales y permite reintentar tras
+  resolverlos; no incorpora un editor de relaciones ni una migración descendente
+  de esquema. Un fallo conserva esa base, aunque la otra ya haya migrado.
+
+### Continuación con la app real — 2026-10-27
+
+Se amplió la validación anterior usando el APK debug original, sin modificar su
+Application ni sustituir MainActivity o los flujos de backup. SHA-256 del APK:
+`1cca19a55ec0d2dadcb61934da48bad8999250183fc4cb2a629bf8297985e54d`.
+Emulador `emulator-5554`, Android SDK 36, páginas de 16 KB.
+
+- **Actualización y arranque completo:** instalación sobre la app anterior y
+  arranque frío real de App/MainActivity (1.247 ms observados, sin cierres).
+  Migración 34 → 35 de manga y 136 → 137 de anime. Los hashes de contenido de las
+  tablas coinciden antes/después, excepto el orden previsto de la categoría de
+  sistema a `-1`: 47 registros manga, 1.382 capítulos y 14 historiales; 103 registros
+  anime, 1.197 episodios y 3 historiales. Los títulos incluyen caché de navegación.
+  Ambas bases pasan integridad y claves foráneas.
+- **Arranque vacío:** con autorización expresa se apartaron reversiblemente bases,
+  preferencias y archivos privados, con la app detenida y recuperación privada
+  dentro del dispositivo. No se usó `pm clear` ni se desinstaló la app. Se completó
+  el onboarding real, selección SAF de una subcarpeta y bibliotecas vacías; bases
+  nuevas en versiones 35/137. Primer arranque vacío: 5.876 ms observados.
+- **Navegación:** fixtures locales temporales de 205 favoritos manga y 206 anime,
+  dos categorías visibles y títulos multicategoría. Tabs, búsqueda y limpieza,
+  detalles de manga/episodios y padre anime con una temporada. La búsqueda no
+  duplica el título por sus categorías; la selección por rango manga 005 → 001
+  produce cinco elementos; en anime también se comprobó una selección de cinco.
+  Un filtro de descargados del fixture ocultaba la temporada;
+  desactivarlo desde la UI la mostró correctamente, sin cambiar código.
+- **Creación desde UI:** Ajustes → Datos y almacenamiento → Crear copia →
+  CreateDocument de Android → WorkManager → notificación de éxito. Tres copias
+  creadas desde este recorrido. Gzip confirmado dentro del emulador: 205 manga,
+  206 anime, 410 capítulos, 410 episodios y 205 historiales por pila, recorriendo
+  tres lotes por cada pila. Se conservaron las opciones predeterminadas, sin
+  credenciales privadas ni instalación de extensiones.
+- **Restauración desde UI:** GetContent/selector Android → pantalla de opciones →
+  Restaurar → WorkManager y notificación de finalización con **cero errores**,
+  tanto sobre datos existentes como sobre bases vacías. Jobs de creación y
+  restauración en `SUCCEEDED`; se revisó también el resultado de la app, no solo
+  el estado del worker. Cada restauración observada terminó en aproximadamente
+  un segundo con estos fixtures.
+- **Comparación:** capítulos, episodios e historial conservan progreso y
+  marcadores; duración manga acumulada `211150`. Tras restaurar vacío: 205 leídos,
+  205 vistos, 205 marcadores por pila, 205 filler y suma de posiciones `3485` por
+  pila. Comparación con los modelos/serializers reales, dentro del dispositivo:
+  contenido equivalente normalizando fechas de modificación e IDs anime a su
+  identidad fuente/URL. En bases vacías, la única diferencia restante es versión
+  de título: coincide exactamente con `4 + número de pertenencias`, por los
+  triggers previos de categorías. No se normalizaron diferencias de contenido.
+- **Ajustes:** el decoder real confirmó que las dos preferencias respaldadas se
+  conservan con sus tipos y valores; la copia posterior contiene una entrada
+  adicional. No se atribuyó una causa concreta a esa adición ni se exportaron
+  claves o valores. La comparación genérica inicial de protobuf era insuficiente;
+  la conclusión se basa en los modelos reales de la app.
+
+Incidencias de entorno: el proveedor de almacenamiento devolvió
+`NoSuchFileException /storage/emulated` al seleccionar carpetas. Reiniciar Android
+sin borrar datos permitió seleccionar la misma subcarpeta por SAF y continuar.
+El emulador volvió a desaparecer antes del movimiento para la restauración vacía;
+se recuperó sin wipe y se comprobó el estado de los directorios antes de reintentar.
+No se determinó la causa de esos cierres. No hubo cierres del proceso Aniyomi en
+los recorridos completados ni fueron necesarios cambios de código.
+
+Cierre: se devolvieron los directorios originales migrados mediante movimiento,
+con la app detenida. Todas las tablas recuperadas coinciden semánticamente con el
+checkpoint posterior a la actualización, incluidos datos de navegación no
+respaldados por los backups normales. Las preferencias base se recuperaron de la
+copia privada posterior a la actualización y se verificó su igualdad XML dentro
+del dispositivo; los otros ocho archivos de preferencias permanecieron intactos.
+Los checkpoints de SQLite pueden cambiar los bytes físicos sin cambiar contenido.
+Las copias de recuperación y los estados QA quedaron apartados privadamente, sin
+fixtures activos en la biblioteca. El último arranque completo con los originales
+recuperados pasó (1.323 ms observados) y los hashes de contenido siguieron iguales.
+Se devolvió la red al estado inicial; emulador conectado y app detenida al cerrar.
+No se exportaron bases ni backups al equipo. Quedan tres backups sintéticos y
+el permiso SAF adicional en `/sdcard/Documents/Aniyomi/QA-Aniyomi-ui`; las
+preferencias y permisos originales de almacenamiento no se sustituyeron.
+Reporte de recorridos y capturas: `/tmp/aniyomi-real-app-qa/QA-REPORT.md`.
+
+Esta continuación solo añade evidencia y documentación: no hubo modificaciones
+nuevas de código ni se repitieron Gradle o las suites unitarias del APK ya validado.
+Se comprobaron referencias y `git diff --check`; los cambios previos permanecen
+sin stage ni commits en `dev`.
+
+Límites: una sola versión de Android y un emulador. La app debug usa framework
+SQLite en este Android; Requery conserva su matriz de componentes anterior y no
+se repitió aquí la UI con un APK release/R8. No se probaron dispositivos físicos,
+FPS/memoria máxima, cuentas de trackers, claves privadas, instalación de APKs de
+extensiones ni lectura/reproducción. Este recorrido usa backups gzip
+creados por la UI actual; no amplía la cobertura Android de todos los formatos
+legacy, que conserva sus pruebas unitarias anteriores.
 
 ### Adaptación de backups por streaming — 2026-10-22
 

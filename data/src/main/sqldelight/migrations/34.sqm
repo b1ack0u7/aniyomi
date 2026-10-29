@@ -1,0 +1,533 @@
+-- Adapted from Mihon #3805/#4022, including a999e49f, 9dbb7148 and ea2b73ad.
+-- Copy rows without trusting legacy indexes before rebuilding constraints.
+
+CREATE TEMP TABLE legacy_mangas AS SELECT _id, source, url, artist, author, description, genre, title, status, thumbnail_url, favorite, last_update, next_update, initialized, viewer, chapter_flags, cover_last_modified, date_added, update_strategy, calculate_interval, last_modified_at, favorite_modified_at, version, is_syncing, memo FROM mangas NOT INDEXED;
+
+CREATE TEMP TABLE legacy_chapters AS SELECT _id, manga_id, url, name, scanlator, read, bookmark, last_page_read, chapter_number, source_order, date_fetch, date_upload, last_modified_at, version, is_syncing, memo FROM chapters NOT INDEXED;
+
+CREATE TEMP TABLE legacy_categories AS SELECT _id, name, sort, flags, hidden FROM categories NOT INDEXED;
+
+CREATE TEMP TABLE legacy_mangas_categories AS SELECT _id, manga_id, category_id FROM mangas_categories NOT INDEXED;
+
+CREATE TEMP TABLE legacy_manga_sync AS SELECT _id, manga_id, sync_id, remote_id, library_id, title, last_chapter_read, total_chapters, status, score, remote_url, start_date, finish_date, private FROM manga_sync NOT INDEXED;
+
+CREATE TEMP TABLE legacy_sources AS SELECT _id, lang, name FROM sources NOT INDEXED;
+
+CREATE TEMP TABLE legacy_history AS SELECT _id, chapter_id, last_read, time_read FROM history NOT INDEXED;
+
+CREATE TEMP TABLE legacy_excluded_scanlators AS SELECT manga_id, scanlator FROM excluded_scanlators NOT INDEXED;
+
+CREATE INDEX migration_history_item ON legacy_history(chapter_id);
+
+CREATE TEMP TABLE title_map(old_id INTEGER, keep_id INTEGER, precedence INTEGER, favorite INTEGER);
+
+INSERT INTO title_map
+SELECT _id AS old_id,
+    first_value(_id) OVER (PARTITION BY source, url ORDER BY favorite DESC, _id),
+    row_number() OVER (PARTITION BY source, url ORDER BY favorite DESC, _id),
+    favorite
+FROM legacy_mangas;
+
+CREATE UNIQUE INDEX migration_title_old ON title_map(old_id);
+
+CREATE INDEX migration_title_keep ON title_map(keep_id, precedence);
+
+CREATE INDEX migration_title_id ON legacy_mangas(_id);
+
+CREATE TEMP TABLE item_map(old_id INTEGER, title_id INTEGER, keep_id INTEGER);
+
+INSERT INTO item_map
+SELECT C._id AS old_id, M.keep_id AS title_id,
+    first_value(C._id) OVER (PARTITION BY M.keep_id, C.url
+        ORDER BY EXISTS(SELECT 1 FROM legacy_history H WHERE H.chapter_id = C._id) DESC, C._id)
+FROM legacy_chapters C JOIN title_map M ON M.old_id = C.manga_id;
+
+CREATE UNIQUE INDEX migration_item_old ON item_map(old_id);
+
+CREATE INDEX migration_item_keep ON item_map(keep_id);
+
+CREATE INDEX migration_item_id ON legacy_chapters(_id);
+
+-- Kotlin merges JSON objects after this migration without requiring SQLite JSON extensions.
+CREATE TEMP TABLE migration_manga_memo(kind INTEGER, target_id INTEGER, precedence INTEGER, old_id INTEGER, memo BLOB);
+
+INSERT INTO migration_manga_memo
+SELECT 0, M.keep_id, M.precedence, M.old_id, D.memo
+FROM legacy_mangas D JOIN title_map M ON M.old_id = D._id
+WHERE EXISTS(SELECT 1 FROM title_map X WHERE X.keep_id = M.keep_id AND X.old_id != M.old_id);
+
+INSERT INTO migration_manga_memo
+SELECT 1, M.keep_id, M.old_id != M.keep_id, M.old_id, D.memo
+FROM legacy_chapters D JOIN item_map M ON M.old_id = D._id
+WHERE EXISTS(SELECT 1 FROM item_map X WHERE X.keep_id = M.keep_id AND X.old_id != M.old_id);
+
+DROP VIEW historyView;
+
+DROP VIEW libraryView;
+
+DROP VIEW updatesView;
+
+DROP TABLE history;
+
+DROP TABLE mangas_categories;
+
+DROP TABLE manga_sync;
+
+DROP TABLE excluded_scanlators;
+
+DROP TABLE chapters;
+
+DROP TABLE mangas;
+
+DROP TABLE categories;
+
+DROP TABLE sources;
+
+CREATE TABLE category(
+    id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort INTEGER NOT NULL,
+    flags INTEGER NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE chapter(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_name TEXT NOT NULL,
+    remote_scanlator TEXT,
+    user_read INTEGER NOT NULL,
+    user_bookmark INTEGER NOT NULL,
+    user_last_page_read INTEGER NOT NULL,
+    remote_chapter_number REAL NOT NULL,
+    remote_source_order INTEGER NOT NULL,
+    state_date_fetch INTEGER NOT NULL,
+    remote_date_upload INTEGER NOT NULL,
+    last_modified_at INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0,
+    is_syncing INTEGER NOT NULL DEFAULT 0,
+    remote_memo BLOB NOT NULL DEFAULT (CAST('{}' AS BLOB)),
+    UNIQUE(manga_id, remote_url),
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX chapters_manga_id_index ON chapter(manga_id);
+
+CREATE INDEX chapters_unread_by_manga_index ON chapter(manga_id, user_read) WHERE user_read = 0;
+
+CREATE INDEX chapter_fetch_date_index ON chapter(state_date_fetch DESC);
+
+CREATE TABLE excluded_scanlator(
+    manga_id INTEGER NOT NULL,
+    scanlator TEXT NOT NULL,
+    UNIQUE(manga_id, scanlator),
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX excluded_scanlators_manga_id_index ON excluded_scanlator(manga_id);
+
+CREATE TABLE history(
+    id INTEGER NOT NULL PRIMARY KEY,
+    chapter_id INTEGER NOT NULL UNIQUE,
+    last_read INTEGER,
+    time_read INTEGER NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES chapter (id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX history_history_chapter_id_index ON history(chapter_id);
+
+CREATE INDEX history_date_index ON history(last_read DESC);
+
+CREATE TABLE manga(
+    id INTEGER NOT NULL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_artist TEXT,
+    remote_author TEXT,
+    remote_description TEXT,
+    remote_genre TEXT,
+    remote_title TEXT NOT NULL,
+    remote_status INTEGER NOT NULL,
+    remote_cover TEXT,
+    favorite INTEGER NOT NULL,
+    state_last_update INTEGER,
+    state_next_update INTEGER,
+    state_initialized INTEGER NOT NULL,
+    user_viewer INTEGER NOT NULL,
+    user_chapter_flags INTEGER NOT NULL,
+    state_cover_last_modified INTEGER NOT NULL,
+    date_added INTEGER NOT NULL,
+    remote_update_strategy INTEGER NOT NULL DEFAULT 0,
+    state_fetch_interval INTEGER DEFAULT 0 NOT NULL,
+    last_modified_at INTEGER NOT NULL DEFAULT 0,
+    favorite_modified_at INTEGER,
+    version INTEGER NOT NULL DEFAULT 0,
+    is_syncing INTEGER NOT NULL DEFAULT 0,
+    remote_memo BLOB NOT NULL DEFAULT (CAST('{}' AS BLOB)),
+    UNIQUE(source_id, remote_url)
+);
+
+CREATE INDEX library_favorite_index ON manga(favorite) WHERE favorite = 1;
+
+CREATE INDEX mangas_url_index ON manga(remote_url);
+
+CREATE TABLE manga_category(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    category_id INTEGER NOT NULL,
+    UNIQUE(manga_id, category_id),
+    FOREIGN KEY(category_id) REFERENCES category (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE manga_track(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    sync_id INTEGER NOT NULL,
+    remote_id INTEGER NOT NULL,
+    library_id INTEGER,
+    title TEXT NOT NULL,
+    last_chapter_read REAL NOT NULL,
+    total_chapters INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    score REAL NOT NULL,
+    remote_url TEXT NOT NULL,
+    start_date INTEGER NOT NULL,
+    finish_date INTEGER NOT NULL,
+    private INTEGER DEFAULT 0 NOT NULL,
+    UNIQUE (manga_id, sync_id),
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE source(
+    id INTEGER NOT NULL PRIMARY KEY,
+    lang TEXT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TEMP TABLE migration_blank_characters(value TEXT NOT NULL);
+
+INSERT INTO migration_blank_characters VALUES (char(9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288));
+
+INSERT INTO manga(id, source_id, remote_url, remote_artist, remote_author, remote_description, remote_genre, remote_title, remote_status, remote_cover, favorite, state_last_update, state_next_update, state_initialized, user_viewer, user_chapter_flags, state_cover_last_modified, date_added, remote_update_strategy, state_fetch_interval, last_modified_at, favorite_modified_at, version, is_syncing, remote_memo)
+SELECT
+    T._id,
+    T.source,
+    T.url,
+    (SELECT D.artist FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.artist IS NOT NULL ORDER BY trim(D.artist, (SELECT value FROM migration_blank_characters)) = '', DM.precedence LIMIT 1),
+    (SELECT D.author FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.author IS NOT NULL ORDER BY trim(D.author, (SELECT value FROM migration_blank_characters)) = '', DM.precedence LIMIT 1),
+    (SELECT D.description FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.description IS NOT NULL ORDER BY trim(D.description, (SELECT value FROM migration_blank_characters)) = '', DM.precedence LIMIT 1),
+    (SELECT D.genre FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.genre IS NOT NULL ORDER BY trim(D.genre, (SELECT value FROM migration_blank_characters)) = '', DM.precedence LIMIT 1),
+    T.title,
+    T.status,
+    (SELECT D.thumbnail_url FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.thumbnail_url IS NOT NULL ORDER BY trim(D.thumbnail_url, (SELECT value FROM migration_blank_characters)) = '', DM.precedence LIMIT 1),
+    T.favorite,
+    (SELECT max(D.last_update) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id),
+    T.next_update,
+    (SELECT max(D.initialized) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id),
+    T.viewer,
+    T.chapter_flags,
+    (SELECT max(D.cover_last_modified) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id),
+    CASE WHEN T.favorite = 1 THEN coalesce((SELECT min(nullif(D.date_added, 0)) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND D.favorite = 1), 0) ELSE T.date_added END,
+    T.update_strategy,
+    T.calculate_interval,
+    (SELECT max(D.last_modified_at) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id),
+    (SELECT max(D.favorite_modified_at) FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id),
+    T.version,
+    T.is_syncing,
+    CAST(coalesce((SELECT D.memo FROM legacy_mangas D JOIN title_map DM ON DM.old_id = D._id WHERE DM.keep_id = T._id AND CAST(D.memo AS TEXT) != '{}' ORDER BY DM.precedence LIMIT 1), T.memo) AS BLOB)
+FROM legacy_mangas T JOIN title_map M ON M.old_id = T._id AND M.keep_id = T._id;
+
+INSERT INTO chapter(id, manga_id, remote_url, remote_name, remote_scanlator, user_read, user_bookmark, user_last_page_read, remote_chapter_number, remote_source_order, state_date_fetch, remote_date_upload, last_modified_at, version, is_syncing, remote_memo)
+SELECT
+    C._id,
+    M.title_id,
+    C.url,
+    C.name,
+    (SELECT D.scanlator FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id AND D.scanlator IS NOT NULL ORDER BY trim(D.scanlator, (SELECT value FROM migration_blank_characters)) = '', (DM.old_id = DM.keep_id) DESC, D._id LIMIT 1),
+    (SELECT max(D.read) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id),
+    (SELECT max(D.bookmark) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id),
+    (SELECT max(D.last_page_read) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id),
+    C.chapter_number,
+    C.source_order,
+    coalesce((SELECT min(nullif(D.date_fetch, 0)) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id), 0),
+    (SELECT max(D.date_upload) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id),
+    (SELECT max(D.last_modified_at) FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id),
+    C.version,
+    C.is_syncing,
+    CAST(coalesce((SELECT D.memo FROM legacy_chapters D JOIN item_map DM ON DM.old_id = D._id WHERE DM.keep_id = C._id AND CAST(D.memo AS TEXT) != '{}' ORDER BY (DM.old_id = DM.keep_id) DESC, D._id LIMIT 1), C.memo) AS BLOB)
+FROM legacy_chapters C JOIN item_map M ON M.old_id = C._id AND M.keep_id = C._id;
+
+CREATE TABLE download_queue_alias(
+    old_parent_id INTEGER NOT NULL,
+    old_item_id INTEGER NOT NULL,
+    item_id INTEGER,
+    PRIMARY KEY(old_parent_id, old_item_id),
+    FOREIGN KEY(item_id) REFERENCES chapter (id) ON DELETE SET NULL
+);
+
+INSERT INTO download_queue_alias
+SELECT C.manga_id, C._id, M.keep_id
+FROM legacy_chapters C LEFT JOIN item_map M ON M.old_id = C._id;
+
+INSERT INTO history(id, chapter_id, last_read, time_read)
+SELECT
+    min(H._id),
+    M.keep_id,
+    max(H.last_read),
+    sum(H.time_read)
+FROM legacy_history H JOIN item_map M ON M.old_id = H.chapter_id GROUP BY M.keep_id;
+
+INSERT INTO category(id, name, sort, flags, hidden)
+SELECT
+    C._id,
+    C.name,
+    CASE WHEN C._id = 0 THEN -1 ELSE row_number() OVER (PARTITION BY C._id = 0 ORDER BY C.sort, C._id) - 1 END,
+    C.flags,
+    C.hidden
+FROM legacy_categories C;
+
+INSERT INTO category(id, name, sort, flags, hidden) VALUES (0, '', -1, 0, 0) ON CONFLICT(id) DO NOTHING;
+
+-- Removed titles keep their categories; library groups only inherit memberships from favorite copies.
+INSERT INTO manga_category(id, manga_id, category_id)
+SELECT
+    min(C._id),
+    M.keep_id,
+    C.category_id
+FROM legacy_mangas_categories C JOIN title_map M ON M.old_id = C.manga_id
+JOIN legacy_categories K ON K._id = C.category_id
+JOIN manga T ON T.id = M.keep_id
+WHERE M.favorite = 1 OR T.favorite = 0
+GROUP BY M.keep_id, C.category_id;
+
+CREATE TEMP TABLE track_map(_id INTEGER, keep_id INTEGER, precedence INTEGER);
+
+INSERT INTO track_map SELECT S._id, M.keep_id, row_number() OVER (PARTITION BY M.keep_id, S.sync_id ORDER BY M.favorite DESC, S.last_chapter_read DESC, M.precedence, S._id) FROM legacy_manga_sync S JOIN title_map M ON M.old_id = S.manga_id;
+
+INSERT INTO manga_track(id, manga_id, sync_id, remote_id, library_id, title, last_chapter_read, total_chapters, status, score, remote_url, start_date, finish_date, private)
+SELECT
+    S._id,
+    M.keep_id,
+    S.sync_id,
+    S.remote_id,
+    S.library_id,
+    S.title,
+    S.last_chapter_read,
+    S.total_chapters,
+    S.status,
+    S.score,
+    S.remote_url,
+    S.start_date,
+    S.finish_date,
+    S.private
+FROM legacy_manga_sync S JOIN track_map M ON M._id = S._id WHERE M.precedence = 1;
+
+INSERT INTO source(id, lang, name)
+SELECT
+    S._id,
+    S.lang,
+    S.name
+FROM legacy_sources S;
+
+INSERT INTO excluded_scanlator(manga_id, scanlator)
+SELECT
+    M.keep_id,
+    S.scanlator
+FROM legacy_excluded_scanlators S JOIN title_map M ON M.old_id = S.manga_id GROUP BY M.keep_id, S.scanlator;
+
+-- Disallow deletion of default category
+CREATE TRIGGER IF NOT EXISTS system_category_delete_trigger BEFORE DELETE
+ON category
+BEGIN SELECT CASE
+    WHEN old.id <= 0 THEN
+        RAISE(ABORT, "System category can't be deleted")
+    END;
+END;
+
+CREATE TRIGGER update_last_modified_at_chapters
+AFTER UPDATE ON chapter
+FOR EACH ROW
+BEGIN
+  UPDATE chapter
+  SET last_modified_at = strftime('%s', 'now')
+  WHERE id = new.id;
+END;
+
+CREATE TRIGGER update_chapter_and_manga_version AFTER UPDATE ON chapter
+WHEN new.is_syncing = 0 AND (
+    new.user_read != old.user_read OR
+    new.user_bookmark != old.user_bookmark OR
+    new.user_last_page_read != old.user_last_page_read
+)
+BEGIN
+    -- Update the chapter version
+    UPDATE chapter SET version = version + 1
+    WHERE id = new.id;
+
+    -- Update the manga version
+    UPDATE manga SET version = version + 1
+    WHERE id = new.manga_id AND (SELECT is_syncing FROM manga WHERE id = new.manga_id) = 0;
+END;
+
+CREATE TRIGGER update_last_favorite_at_mangas
+AFTER UPDATE OF favorite ON manga
+BEGIN
+  UPDATE manga
+  SET favorite_modified_at = strftime('%s', 'now')
+  WHERE id = new.id;
+END;
+
+CREATE TRIGGER update_last_modified_at_mangas
+AFTER UPDATE ON manga
+FOR EACH ROW
+BEGIN
+  UPDATE manga
+  SET last_modified_at = strftime('%s', 'now')
+  WHERE id = new.id;
+END;
+
+CREATE TRIGGER update_manga_version AFTER UPDATE ON manga
+BEGIN
+    UPDATE manga SET version = version + 1
+    WHERE id = new.id AND new.is_syncing = 0 AND (
+        new.remote_url != old.remote_url OR
+        new.remote_description != old.remote_description OR
+        new.favorite != old.favorite
+    );
+END;
+
+CREATE TRIGGER insert_manga_category_update_version AFTER INSERT ON manga_category
+BEGIN
+    UPDATE manga
+    SET version = version + 1
+    WHERE id = new.manga_id AND (SELECT is_syncing FROM manga WHERE id = new.manga_id) = 0;
+END;
+
+CREATE VIEW historyView AS
+SELECT
+    history.id AS id,
+    manga.id AS mangaId,
+    chapter.id AS chapterId,
+    manga.remote_title AS title,
+    manga.remote_cover AS thumbnailUrl,
+    manga.source_id AS source,
+    manga.favorite AS favorite,
+    manga.state_cover_last_modified AS cover_last_modified,
+    chapter.remote_chapter_number AS chapterNumber,
+    history.last_read AS readAt,
+    history.time_read AS readDuration,
+    max_last_read.last_read AS maxReadAt,
+    max_last_read.chapter_id AS maxReadAtChapterId
+FROM manga
+JOIN chapter
+ON manga.id = chapter.manga_id
+JOIN history
+ON chapter.id = history.chapter_id
+JOIN (
+    SELECT chapter.manga_id,chapter.id AS chapter_id, MAX(history.last_read) AS last_read
+    FROM chapter JOIN history
+    ON chapter.id = history.chapter_id
+    GROUP BY chapter.manga_id
+) AS max_last_read
+ON chapter.manga_id = max_last_read.manga_id;
+
+CREATE VIEW libraryView AS
+SELECT
+    M.*,
+    coalesce(C.total, 0) AS totalCount,
+    coalesce(C.readCount, 0) AS readCount,
+    coalesce(C.latestUpload, 0) AS latestUpload,
+    coalesce(C.fetchedAt, 0) AS chapterFetchedAt,
+    coalesce(H.lastRead, 0) AS lastRead,
+    coalesce(C.bookmarkCount, 0) AS bookmarkCount,
+    coalesce((
+        SELECT group_concat(category_id)
+        FROM (
+            SELECT MC.category_id
+            FROM manga_category MC JOIN category CAT ON CAT.id = MC.category_id
+            WHERE MC.manga_id = M.id
+            ORDER BY CAT.sort, CAT.id
+        )
+    ), '0') AS categories
+FROM manga M
+LEFT JOIN (
+    SELECT
+        C.manga_id,
+        count(*) AS total,
+        sum(C.user_read) AS readCount,
+        max(C.remote_date_upload) AS latestUpload,
+        max(C.state_date_fetch) AS fetchedAt,
+        sum(C.user_bookmark) AS bookmarkCount
+    FROM chapter C
+    WHERE C.manga_id IN (SELECT id FROM manga WHERE favorite = 1)
+    AND NOT EXISTS (
+        SELECT 1 FROM excluded_scanlator ES
+        WHERE ES.manga_id = C.manga_id AND ES.scanlator = C.remote_scanlator
+    )
+    GROUP BY C.manga_id
+) C ON M.id = C.manga_id
+LEFT JOIN (
+    SELECT C.manga_id, max(H.last_read) AS lastRead
+    FROM history H JOIN chapter C ON C.id = H.chapter_id
+    WHERE C.manga_id IN (SELECT id FROM manga WHERE favorite = 1)
+    AND NOT EXISTS (
+        SELECT 1 FROM excluded_scanlator ES
+        WHERE ES.manga_id = C.manga_id AND ES.scanlator = C.remote_scanlator
+    )
+    GROUP BY C.manga_id
+) H ON M.id = H.manga_id
+WHERE M.favorite = 1;
+
+CREATE VIEW updatesView AS
+SELECT
+    manga.id AS mangaId,
+    manga.remote_title AS mangaTitle,
+    chapter.id AS chapterId,
+    chapter.remote_name AS chapterName,
+    chapter.remote_scanlator AS scanlator,
+    chapter.user_read AS read,
+    chapter.user_bookmark AS bookmark,
+    chapter.user_last_page_read AS last_page_read,
+    manga.source_id AS source,
+    manga.favorite AS favorite,
+    manga.remote_cover AS thumbnailUrl,
+    manga.state_cover_last_modified AS coverLastModified,
+    chapter.remote_date_upload AS dateUpload,
+    chapter.state_date_fetch AS datefetch
+FROM manga JOIN chapter
+ON manga.id = chapter.manga_id
+WHERE favorite = 1
+AND state_date_fetch > date_added
+ORDER BY state_date_fetch DESC;
+
+DROP TABLE legacy_mangas;
+
+DROP TABLE legacy_chapters;
+
+DROP TABLE legacy_categories;
+
+DROP TABLE legacy_mangas_categories;
+
+DROP TABLE legacy_manga_sync;
+
+DROP TABLE legacy_sources;
+
+DROP TABLE legacy_history;
+
+DROP TABLE legacy_excluded_scanlators;
+
+DROP TABLE track_map;
+
+DROP TABLE item_map;
+
+DROP TABLE title_map;
+
+DROP TABLE migration_blank_characters;

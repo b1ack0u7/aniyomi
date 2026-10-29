@@ -17,6 +17,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,7 @@ import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
 import eu.kanade.presentation.components.IndexingBannerBackgroundColor
+import eu.kanade.presentation.more.DatabaseInitializationScreen
 import eu.kanade.presentation.more.settings.screen.browse.AnimeExtensionReposScreen
 import eu.kanade.presentation.more.settings.screen.browse.MangaExtensionReposScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
@@ -75,6 +77,7 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.download.DownloadQueueMigration
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -108,11 +111,12 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import mihon.core.database.DatabaseInitializer
 import mihon.core.migration.Migrator
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
@@ -120,6 +124,7 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.release.interactor.GetApplicationRelease
+import tachiyomi.domain.source.anime.service.AnimeSourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.util.collectAsState
@@ -143,6 +148,9 @@ class MainActivity : BaseActivity() {
     var ready = false
 
     private var navigator: Navigator? = null
+    private val databaseInitializer: DatabaseInitializer by injectLazy()
+    private val externalPlayerResults by viewModels<ExternalPlayerResultViewModel>()
+    private var didMigration by mutableStateOf<Boolean?>(null)
 
     init {
         registerSecureActivity(this)
@@ -156,15 +164,27 @@ class MainActivity : BaseActivity() {
 
         super.onCreate(savedInstanceState)
 
-        val didMigration = Migrator.awaitAndRelease()
-
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         if (!isTaskRoot) {
             finish()
             return
         }
 
+        lifecycleScope.launch {
+            didMigration = Migrator.awaitAndRelease()
+        }
+
         setComposeContent {
+            val initialization by databaseInitializer.state.collectAsState()
+            if (!initialization.isReady || didMigration == null) {
+                DatabaseInitializationScreen(
+                    state = initialization,
+                    onRetry = { lifecycleScope.launch { databaseInitializer.open() } },
+                )
+                LaunchedEffect(Unit) { ready = true }
+                return@setComposeContent
+            }
+
             val context = LocalContext.current
 
             var incognito by remember { mutableStateOf(getMangaIncognitoState.await(null)) }
@@ -284,7 +304,7 @@ class MainActivity : BaseActivity() {
                 ShowOnboarding()
             }
 
-            var showChangelog by remember { mutableStateOf(didMigration && !BuildConfig.DEBUG) }
+            var showChangelog by remember { mutableStateOf(didMigration == true && !BuildConfig.DEBUG) }
             if (showChangelog) {
                 AlertDialog(
                     onDismissRequest = { showChangelog = false },
@@ -320,20 +340,34 @@ class MainActivity : BaseActivity() {
             }
         }
 
+        externalPlayerResults.start(
+            awaitReady = databaseInitializer::awaitReady,
+            initialize = { animeId, episodeId, legacyIds ->
+                val target = if (legacyIds) DownloadQueueMigration().anime(animeId, episodeId) else null
+                if (target != null && (target.parentId == null || target.itemId == null)) {
+                    false
+                } else {
+                    Injekt.get<AnimeSourceManager>().isInitialized.first { it }
+                    ExternalIntents.externalIntents.initAnime(target?.parentId ?: animeId, target?.itemId ?: episodeId)
+                }
+            },
+            consume = { ExternalIntents.externalIntents.onActivityResult(it) },
+        )
         externalPlayerResult = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult(),
         ) { result: ActivityResult ->
             if (result.resultCode == Activity.RESULT_OK) {
-                val animeId = savedInstanceState?.getLong(SAVED_STATE_ANIME_KEY)
-                val episodeId = savedInstanceState?.getLong(SAVED_STATE_EPISODE_KEY)
-
+                val external = ExternalIntents.externalIntents
+                val animeId = external.animeId ?: savedInstanceState?.takeIf { it.containsKey(SAVED_STATE_ANIME_KEY) }
+                    ?.getLong(SAVED_STATE_ANIME_KEY)
+                val episodeId =
+                    external.episodeId ?: savedInstanceState?.takeIf { it.containsKey(SAVED_STATE_EPISODE_KEY) }
+                        ?.getLong(SAVED_STATE_EPISODE_KEY)
                 if (animeId != null && episodeId != null) {
-                    runBlocking {
-                        ExternalIntents.externalIntents.initAnime(animeId, episodeId)
-                    }
+                    val legacyIds = external.animeId == null &&
+                        savedInstanceState?.getBoolean(SAVED_STATE_EXTERNAL_IDS_CURRENT) != true
+                    externalPlayerResults.enqueue(animeId, episodeId, result.data, legacyIds)
                 }
-
-                ExternalIntents.externalIntents.onActivityResult(result.data)
             }
         }
     }
@@ -568,6 +602,7 @@ class MainActivity : BaseActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        outState.putBoolean(SAVED_STATE_EXTERNAL_IDS_CURRENT, true)
 
         ExternalIntents.externalIntents.animeId?.let {
             outState.putLong(SAVED_STATE_ANIME_KEY, it)
@@ -586,6 +621,7 @@ class MainActivity : BaseActivity() {
 
         const val SAVED_STATE_ANIME_KEY = "saved_state_anime_key"
         const val SAVED_STATE_EPISODE_KEY = "saved_state_episode_key"
+        private const val SAVED_STATE_EXTERNAL_IDS_CURRENT = "saved_state_external_ids_current"
 
         private var externalPlayerResult: ActivityResultLauncher<Intent>? = null
 

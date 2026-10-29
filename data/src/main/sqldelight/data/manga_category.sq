@@ -1,0 +1,26 @@
+CREATE TABLE manga_category(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    category_id INTEGER NOT NULL,
+    UNIQUE(manga_id, category_id),
+    FOREIGN KEY(category_id) REFERENCES category (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+CREATE TRIGGER insert_manga_category_update_version AFTER INSERT ON manga_category
+BEGIN
+    UPDATE manga
+    SET version = version + 1
+    WHERE id = new.manga_id AND (SELECT is_syncing FROM manga WHERE id = new.manga_id) = 0;
+END;
+
+insert:
+INSERT INTO manga_category(manga_id, category_id)
+VALUES (:mangaId, :categoryId)
+ON CONFLICT(manga_id, category_id) DO NOTHING;
+
+deleteMangaCategoryByMangaId:
+DELETE FROM manga_category
+WHERE manga_id = :mangaId;

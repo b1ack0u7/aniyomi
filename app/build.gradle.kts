@@ -315,6 +315,7 @@ dependencies {
 
     // Tests
     testImplementation(libs.bundles.test)
+    testImplementation(libs.sqldelight.sqlite.driver)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakcanary.android)

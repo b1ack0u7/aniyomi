@@ -92,7 +92,7 @@ object MangaMapper {
         chapterFetchedAt: Long,
         lastRead: Long,
         bookmarkCount: Double,
-        category: Long,
+        categories: String,
     ): LibraryManga = LibraryManga(
         manga = mapManga(
             id,
@@ -121,7 +121,7 @@ object MangaMapper {
             isSyncing,
             memo,
         ),
-        category = category,
+        categories = if (categories.isEmpty()) listOf(0) else categories.split(',').map(String::toLong),
         totalChapters = totalCount,
         readCount = readCount.toLong(),
         bookmarkCount = bookmarkCount.toLong(),

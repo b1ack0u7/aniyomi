@@ -1,5 +1,5 @@
-CREATE TABLE categories(
-    _id INTEGER NOT NULL PRIMARY KEY,
+CREATE TABLE category(
+    id INTEGER NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     sort INTEGER NOT NULL,
     flags INTEGER NOT NULL,
@@ -7,92 +7,92 @@ CREATE TABLE categories(
 );
 
 -- Insert system category
-INSERT OR IGNORE INTO categories(_id, name, sort, flags) VALUES (0, "", -1, 0);
+INSERT OR IGNORE INTO category(id, name, sort, flags) VALUES (0, "", -1, 0);
 -- Disallow deletion of default category
 CREATE TRIGGER IF NOT EXISTS system_category_delete_trigger BEFORE DELETE
-ON categories
+ON category
 BEGIN SELECT CASE
-    WHEN old._id <= 0 THEN
+    WHEN old.id <= 0 THEN
         RAISE(ABORT, "System category can't be deleted")
     END;
 END;
 
 getCategory:
 SELECT *
-FROM categories
-WHERE _id = :id
+FROM category
+WHERE id = :id
 LIMIT 1;
 
 getCategories:
 SELECT
-_id AS id,
+id AS id,
 name,
 sort AS `order`,
 flags,
 hidden
-FROM categories
+FROM category
 ORDER BY sort;
 
 getVisibleCategories:
 SELECT
-_id AS id,
+id AS id,
 name,
 sort AS `order`,
 flags,
 hidden
-FROM categories
+FROM category
 WHERE hidden = 0
 ORDER BY sort;
 
-getCategoriesByMangaId:
+getCategoriesByAnimeId:
 SELECT
-C._id AS id,
+C.id AS id,
 C.name,
 C.sort AS `order`,
 C.flags,
 C.hidden
-FROM categories C
-JOIN mangas_categories MC
-ON C._id = MC.category_id
-WHERE MC.manga_id = :mangaId;
+FROM category C
+JOIN anime_category AC
+ON C.id = AC.category_id
+WHERE AC.anime_id = :animeId;
 
-getVisibleCategoriesByMangaId:
+getVisibleCategoriesByAnimeId:
 SELECT
-C._id AS id,
+C.id AS id,
 C.name,
 C.sort AS `order`,
 C.flags,
 C.hidden
-FROM categories C
-JOIN mangas_categories MC
-ON C._id = MC.category_id
-WHERE MC.manga_id = :mangaId AND C.hidden = 0;
+FROM category C
+JOIN anime_category AC
+ON C.id = AC.category_id
+WHERE AC.anime_id = :animeId AND C.hidden = 0;
 
 insert:
-INSERT INTO categories(name, sort, flags)
+INSERT INTO category(name, sort, flags)
 VALUES (:name, :order, :flags);
 
 delete:
-DELETE FROM categories
-WHERE _id = :categoryId;
+DELETE FROM category
+WHERE id = :categoryId;
 
 update:
-UPDATE categories
+UPDATE category
 SET name = coalesce(:name, name),
     sort = coalesce(:order, sort),
     flags = coalesce(:flags, flags),
     hidden = coalesce(:hidden, hidden)
-WHERE _id = :categoryId;
+WHERE id = :categoryId;
 
 updateAllFlags:
-UPDATE categories SET
+UPDATE category SET
 flags = coalesce(?, flags);
 
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
 
-getCategoryOrdersByMangaIds:
-SELECT MC.manga_id, C.sort
-FROM categories C
-JOIN mangas_categories MC ON C._id = MC.category_id
-WHERE MC.manga_id IN :mangaIds;
+getCategoryOrdersByAnimeIds:
+SELECT MC.anime_id, C.sort
+FROM category C
+JOIN anime_category MC ON C.id = MC.category_id
+WHERE MC.anime_id IN :animeIds;

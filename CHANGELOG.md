@@ -22,6 +22,9 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Improved
 
+- Rebuild manga and anime databases with unique identities, safe duplicate merging and faster library queries without multiplying entries by category; adapted from Mihon PRs [#3805](https://github.com/mihonapp/mihon/pull/3805) and [#4022](https://github.com/mihonapp/mihon/pull/4022), preserving fork-specific backup and season data
+- Show database migration progress and copyable errors with retry during startup; preserve the previous database when incompatible anime season relationships prevent migration
+
 - Stream manga and anime backup creation, validation and restoration, with batched queries and compatibility with existing backup formats; adapted from Mihon [771ba33a3](https://github.com/mihonapp/mihon/commit/771ba33a3)
 
 - Add missing Spanish text for reader preloading, extension load errors and WebView renderer exits
@@ -41,6 +44,26 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Release search request resources and observers from previous queries, and bound simultaneous global source requests on both sides; adapted from Mihon [a4780e4ed](https://github.com/mihonapp/mihon/commit/a4780e4ed) and [2d1d2e4ca](https://github.com/mihonapp/mihon/commit/2d1d2e4cabc404461b3346b31b71c16cbca3be7b)
 
 ### Fixed
+
+- Recover manga and anime history without backing up reading or playback progress, keep historical titles outside the library in subsequent backups, and report older history entries that cannot be matched safely
+- Preserve hidden manga and anime categories in backups, retaining local visibility when older backups omit it
+- Allow backups containing only extension APKs and reject exports with no selected content available
+- Include app and source preference failures in the restore error report without exposing preference values
+- Prevent concurrent manga and anime progress notifications from interrupting partially completed restores
+
+- Restore manga and anime category preferences using their respective backup categories
+- Isolate pending manga and anime tracker updates, bind them to their original links and recorded logins, and preserve ambiguous legacy entries
+- Retry failed anime tracker updates, including returns from external players
+
+- Preserve pending manga and anime downloads when database migration merges duplicate titles or items, and keep each download queue separate
+- Merge manga memo keys and recover non-empty metadata from duplicate records during database migration
+- Combine categories of repeated titles within older backups without mixing categories from different restores
+- Keep external player results pending through database initialization failures and activity recreation while allowing startup recovery
+
+- Preserve progress, marks and history when restoring older manga and anime backups with duplicate chapters or episodes; adapted from Mihon [6ee529c5a](https://github.com/mihonapp/mihon/commit/6ee529c5a) and [306befb21](https://github.com/mihonapp/mihon/commit/306befb21)
+- Preserve categories of titles outside the library during database migration; adapted from Mihon [93cc07511](https://github.com/mihonapp/mihon/commit/93cc07511)
+- Keep pending manga and anime workers from opening databases before startup migration succeeds, and retry pending updates after a migration failure
+- Preserve the range selection anchor when deselecting titles, selecting all or inverting selection in manga and anime libraries
 
 - Prevent canceled reader preload plans and evicted cache entries from bypassing transfer admission, and show source access warnings for visible image failures even when the page list is cached
 

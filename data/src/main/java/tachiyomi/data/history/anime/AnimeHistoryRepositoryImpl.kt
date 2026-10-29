@@ -27,7 +27,7 @@ class AnimeHistoryRepositoryImpl(
 
     override suspend fun getHistoryByAnimeId(animeId: Long): List<AnimeHistory> {
         return handler.awaitList {
-            animehistoryQueries.getHistoryByAnimeId(
+            anime_historyQueries.getHistoryByAnimeId(
                 animeId,
                 AnimeHistoryMapper::mapAnimeHistory,
             )
@@ -36,7 +36,7 @@ class AnimeHistoryRepositoryImpl(
 
     override suspend fun resetAnimeHistory(historyId: Long) {
         try {
-            handler.await { animehistoryQueries.resetAnimeHistoryById(historyId) }
+            handler.await { anime_historyQueries.resetAnimeHistoryById(historyId) }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)
         }
@@ -44,7 +44,7 @@ class AnimeHistoryRepositoryImpl(
 
     override suspend fun resetHistoryByAnimeId(animeId: Long) {
         try {
-            handler.await { animehistoryQueries.resetHistoryByAnimeId(animeId) }
+            handler.await { anime_historyQueries.resetHistoryByAnimeId(animeId) }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)
         }
@@ -52,7 +52,7 @@ class AnimeHistoryRepositoryImpl(
 
     override suspend fun deleteHistoryByAnimeId(animeId: Long) {
         try {
-            handler.await { animehistoryQueries.deleteHistoryByAnimeId(animeId) }
+            handler.await { anime_historyQueries.deleteHistoryByAnimeId(animeId) }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)
         }
@@ -60,7 +60,7 @@ class AnimeHistoryRepositoryImpl(
 
     override suspend fun deleteAllAnimeHistory(): Boolean {
         return try {
-            handler.await { animehistoryQueries.removeAllHistory() }
+            handler.await { anime_historyQueries.removeAllHistory() }
             true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)
@@ -71,7 +71,7 @@ class AnimeHistoryRepositoryImpl(
     override suspend fun upsertAnimeHistory(historyUpdate: AnimeHistoryUpdate) {
         try {
             handler.await {
-                animehistoryQueries.upsert(
+                anime_historyQueries.upsert(
                     historyUpdate.episodeId,
                     historyUpdate.seenAt,
                 )

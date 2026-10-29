@@ -40,7 +40,7 @@ class MangaSourceRepositoryImpl(
 
     override fun getMangaSourcesWithFavoriteCount(): Flow<List<Pair<DomainSource, Long>>> {
         return combine(
-            handler.subscribeToList { mangasQueries.getSourceIdWithFavoriteCount() },
+            handler.subscribeToList { mangaQueries.getSourceIdWithFavoriteCount() },
             sourceManager.catalogueSources,
         ) { sourceIdWithFavoriteCount, _ -> sourceIdWithFavoriteCount }
             .map {
@@ -56,7 +56,7 @@ class MangaSourceRepositoryImpl(
 
     override fun getMangaSourcesWithNonLibraryManga(): Flow<List<MangaSourceWithCount>> {
         val sourceIdWithNonLibraryManga =
-            handler.subscribeToList { mangasQueries.getSourceIdsWithNonLibraryManga() }
+            handler.subscribeToList { mangaQueries.getSourceIdsWithNonLibraryManga() }
         return sourceIdWithNonLibraryManga.map { sourceId ->
             sourceId.map { (sourceId, count) ->
                 val source = sourceManager.getOrStub(sourceId)

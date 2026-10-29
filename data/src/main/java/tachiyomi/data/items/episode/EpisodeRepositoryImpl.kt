@@ -22,7 +22,7 @@ class EpisodeRepositoryImpl(
     ): List<Episode> {
         return handler.await(inTransaction = true) {
             if (episodeIdsToDelete.isNotEmpty()) {
-                episodesQueries.removeEpisodesWithIds(episodeIdsToDelete)
+                episodeQueries.removeEpisodesWithIds(episodeIdsToDelete)
             }
             val addedEpisodes = insertEpisodes(episodesToAdd)
             updateEpisodes(episodesToUpdate)
@@ -32,7 +32,7 @@ class EpisodeRepositoryImpl(
 
     private fun AnimeDatabase.insertEpisodes(episodes: List<Episode>): List<Episode> {
         return episodes.map { episode ->
-            episodesQueries.insert(
+            episodeQueries.insert(
                 episode.animeId,
                 episode.url,
                 episode.name,
@@ -50,8 +50,8 @@ class EpisodeRepositoryImpl(
                 episode.previewUrl,
                 episode.fillermark,
             )
-            val lastInsertId = episodesQueries.selectLastInsertedRowId().executeAsOne()
-            episode.copy(id = lastInsertId)
+            val storedId = episodeQueries.getExistingId(episode.animeId, episode.url).executeAsOne()
+            episodeQueries.getEpisodeById(storedId, ::mapEpisode).executeAsOne()
         }
     }
 
@@ -69,7 +69,7 @@ class EpisodeRepositoryImpl(
 
     private fun AnimeDatabase.updateEpisodes(episodeUpdates: List<EpisodeUpdate>) {
         episodeUpdates.forEach { episodeUpdate ->
-            episodesQueries.update(
+            episodeQueries.update(
                 animeId = episodeUpdate.animeId,
                 url = episodeUpdate.url,
                 name = episodeUpdate.name,
@@ -93,16 +93,16 @@ class EpisodeRepositoryImpl(
     }
 
     override suspend fun removeEpisodesWithIds(episodeIds: List<Long>) {
-        handler.await { episodesQueries.removeEpisodesWithIds(episodeIds) }
+        handler.await { episodeQueries.removeEpisodesWithIds(episodeIds) }
     }
 
     override suspend fun getEpisodeByAnimeId(animeId: Long): List<Episode> {
-        return handler.awaitList { episodesQueries.getEpisodesByAnimeId(animeId, ::mapEpisode) }
+        return handler.awaitList { episodeQueries.getEpisodesByAnimeId(animeId, ::mapEpisode) }
     }
 
     override suspend fun getBookmarkedEpisodesByAnimeId(animeId: Long): List<Episode> {
         return handler.awaitList {
-            episodesQueries.getBookmarkedEpisodesByAnimeId(
+            episodeQueries.getBookmarkedEpisodesByAnimeId(
                 animeId,
                 ::mapEpisode,
             )
@@ -110,12 +110,12 @@ class EpisodeRepositoryImpl(
     }
 
     override suspend fun getEpisodeById(id: Long): Episode? {
-        return handler.awaitOneOrNull { episodesQueries.getEpisodeById(id, ::mapEpisode) }
+        return handler.awaitOneOrNull { episodeQueries.getEpisodeById(id, ::mapEpisode) }
     }
 
     override suspend fun getEpisodeByAnimeIdAsFlow(animeId: Long): Flow<List<Episode>> {
         return handler.subscribeToList {
-            episodesQueries.getEpisodesByAnimeId(
+            episodeQueries.getEpisodesByAnimeId(
                 animeId,
                 ::mapEpisode,
             )
@@ -124,7 +124,7 @@ class EpisodeRepositoryImpl(
 
     override suspend fun getEpisodeByUrlAndAnimeId(url: String, animeId: Long): Episode? {
         return handler.awaitOneOrNull {
-            episodesQueries.getEpisodeByUrlAndAnimeId(
+            episodeQueries.getEpisodeByUrlAndAnimeId(
                 url,
                 animeId,
                 ::mapEpisode,
