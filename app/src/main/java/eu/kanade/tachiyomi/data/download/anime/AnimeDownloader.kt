@@ -138,7 +138,8 @@ class AnimeDownloader(
     init {
         scope.launch {
             try {
-                addAllToQueue(store.restore())
+                sourceManager.isInitialized.first { it }
+                store.restore { addAllToQueue(it, preserveErrors = true) }
             } finally {
                 restored.complete(Unit)
             }

@@ -2,11 +2,15 @@ package eu.kanade.tachiyomi.data.download.manga
 
 import android.content.Context
 import androidx.core.content.edit
+import eu.kanade.tachiyomi.data.download.DownloadQueueMigration
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.entries.manga.interactor.GetManga
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
@@ -24,6 +28,7 @@ class MangaDownloadStore(
     private val json: Json = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
     private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
+    private val migration: DownloadQueueMigration = DownloadQueueMigration(),
 ) {
 
     /**
@@ -44,7 +49,11 @@ class MangaDownloadStore(
     @Synchronized
     fun addAll(downloads: List<MangaDownload>) {
         preferences.edit {
-            downloads.forEach { putString(getKey(it), serialize(it)) }
+            downloads.forEach { download ->
+                val key = getKey(download)
+                val order = preferences.getString(key, null)?.let(::deserialize)?.order ?: counter++
+                putString(key, serialize(download, order))
+            }
         }
     }
 
@@ -87,7 +96,9 @@ class MangaDownloadStore(
     @Synchronized
     fun clear() {
         preferences.edit {
-            clear()
+            preferences.all.forEach { (key, value) ->
+                if (key.startsWith("v1:manga:") || (value as? String)?.let(::deserialize) != null) remove(key)
+            }
         }
     }
 
@@ -97,43 +108,72 @@ class MangaDownloadStore(
      * @param download the download.
      */
     private fun getKey(download: MangaDownload): String {
-        return download.chapter.id.toString()
+        return "v1:manga:${download.chapter.id}"
     }
 
     /**
      * Returns the list of downloads to restore.
      */
-    suspend fun restore(): List<MangaDownload> {
-        val objs = preferences.all
-            .mapNotNull { it.value as? String }
-            .mapNotNull { deserialize(it) }
-            .sortedBy { it.order }
-
-        val downloads = mutableListOf<MangaDownload>()
-        if (objs.isNotEmpty()) {
-            val cachedManga = mutableMapOf<Long, Manga?>()
-            val cachedChapters = mutableMapOf<Long, Map<Long, Chapter>>()
-            for (obj in objs) {
-                val mangaId = obj.mangaId
-                val chapterId = obj.chapterId
-                val manga = cachedManga.getOrPut(mangaId) { getManga.await(mangaId) } ?: continue
-                val source = sourceManager.get(manga.source) as? HttpSource ?: continue
-                // One query per manga rather than one per queued chapter
-                val chapters = cachedChapters.getOrPut(mangaId) {
-                    getChaptersByMangaId.await(mangaId).associateBy(Chapter::id)
-                }
-                val chapter = chapters[chapterId] ?: continue
-                downloads.add(
-                    MangaDownload(source, manga, chapter).apply {
+    suspend fun restore(publishQueue: (List<MangaDownload>) -> Unit = {}): List<MangaDownload> {
+        val snapshot = preferences.all.mapNotNull { (key, value) ->
+            (value as? String)?.let { raw -> deserialize(raw)?.let { Triple(key, raw, it) } }
+        }.sortedBy { it.third.order }
+        val originalValues = snapshot.associate { it.first to it.second }
+        val candidates = mutableListOf<Triple<String, String, Pair<DownloadObject, MangaDownload>>>()
+        val cachedParents = mutableMapOf<Long, Manga?>()
+        val cachedItems = mutableMapOf<Long, Map<Long, Chapter>>()
+        for ((key, raw, obj) in snapshot) {
+            val mapped = try {
+                if (obj.identityVersion == 0) migration.manga(obj.mangaId, obj.chapterId) else null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e)
+                continue
+            }
+            val parentId = if (mapped == null) obj.mangaId else mapped.parentId ?: continue
+            val itemId = if (mapped == null) obj.chapterId else mapped.itemId ?: continue
+            val entry = cachedParents.getOrPut(parentId) { getManga.await(parentId) } ?: continue
+            val source = sourceManager.get(entry.source) as? HttpSource ?: continue
+            val items = cachedItems.getOrPut(parentId) {
+                getChaptersByMangaId.await(parentId).associateBy(Chapter::id)
+            }
+            val child = items[itemId] ?: continue
+            candidates += Triple(
+                key,
+                raw,
+                obj.copy(mangaId = parentId, chapterId = itemId, identityVersion = 1) to
+                    MangaDownload(source, entry, child).apply {
                         if (obj.failed) status = MangaDownload.State.ERROR
                     },
-                )
-            }
+            )
         }
-
-        // Clear the store, downloads will be added again immediately.
-        clear()
-        return downloads
+        return synchronized(this) {
+            counter = maxOf(counter, (snapshot.maxOfOrNull { it.third.order } ?: -1) + 1)
+            val current = preferences.all
+            val valid = candidates.filter { (key, raw, _) -> current[key] == raw }
+                .groupBy { it.third.first.chapterId }
+            val downloads = mutableListOf<MangaDownload>()
+            preferences.edit(commit = true) {
+                valid.forEach { (id, entries) ->
+                    val canonicalKey = "v1:manga:$id"
+                    val changed = current[canonicalKey] != originalValues[canonicalKey]
+                    if (changed) {
+                        // Honor a newer enqueue or removal instead of resurrecting the snapshot.
+                        entries.forEach { (key, _, _) -> if (key != canonicalKey) remove(key) }
+                        return@forEach
+                    }
+                    val (first, download) = entries.first().third
+                    val merged = first.copy(failed = entries.any { it.third.first.failed })
+                    if (merged.failed) download.status = MangaDownload.State.ERROR
+                    entries.forEach { (key, _, _) -> remove(key) }
+                    putString(canonicalKey, json.encodeToString(merged))
+                    downloads += download
+                }
+            }
+            publishQueue(downloads)
+            downloads
+        }
     }
 
     /**
@@ -147,6 +187,7 @@ class MangaDownloadStore(
             download.chapter.id,
             order,
             failed = download.status == MangaDownload.State.ERROR,
+            identityVersion = 1,
         )
         return json.encodeToString(obj)
     }
@@ -178,4 +219,5 @@ private data class DownloadObject(
     val chapterId: Long,
     val order: Int,
     val failed: Boolean = false,
+    val identityVersion: Int = 0,
 )

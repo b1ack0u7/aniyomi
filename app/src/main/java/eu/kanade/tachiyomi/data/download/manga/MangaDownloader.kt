@@ -147,7 +147,8 @@ class MangaDownloader(
         // Restoring hits the database once per queued manga, so keep it off the main thread
         scope.launchIO {
             try {
-                addAllToQueue(store.restore(), preserveErrors = true)
+                sourceManager.isInitialized.first { it }
+                store.restore { addAllToQueue(it, preserveErrors = true) }
             } finally {
                 restored.complete(Unit)
             }

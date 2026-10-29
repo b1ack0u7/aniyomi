@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.download.manga
 
 import android.content.Context
 import android.content.SharedPreferences
+import eu.kanade.tachiyomi.data.download.DownloadQueueMigration
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.kotest.matchers.shouldBe
@@ -51,12 +52,13 @@ class MangaDownloadStoreTest {
         val first = fixture.download(10)
         val second = fixture.download(11)
         store.addAll(listOf(first, second))
-        val originalOrder = Json.parseToJsonElement(fixture.values.getValue("10")).jsonObject.getValue("order")
+        val originalOrder = Json.parseToJsonElement(fixture.values.getValue("v1:manga:10")).jsonObject.getValue("order")
 
         first.status = MangaDownload.State.ERROR
         store.update(first)
-        Json.parseToJsonElement(fixture.values.getValue("10")).jsonObject.getValue("order") shouldBe originalOrder
-        val failed = Json.parseToJsonElement(fixture.values.getValue("10")).jsonObject["failed"]
+        Json.parseToJsonElement(fixture.values.getValue("v1:manga:10")).jsonObject.getValue("order") shouldBe
+            originalOrder
+        val failed = Json.parseToJsonElement(fixture.values.getValue("v1:manga:10")).jsonObject["failed"]
         failed?.jsonPrimitive?.content shouldBe "true"
 
         first.status = MangaDownload.State.QUEUE
@@ -74,6 +76,7 @@ class MangaDownloadStoreTest {
         private val sources = mockk<MangaSourceManager>()
         private val source = mockk<HttpSource>()
         private val manga = mockk<Manga>()
+        private val migration = mockk<DownloadQueueMigration>()
         private val getManga = mockk<GetManga>()
         private val getChapters = mockk<GetChaptersByMangaId>()
         private val chapters = listOf(10L, 11L).map { Chapter.create().copy(id = it, mangaId = 1) }
@@ -91,6 +94,11 @@ class MangaDownloadStoreTest {
                 values.clear()
                 editor
             }
+            coEvery { migration.manga(any(), any()) } returns null
+            every { editor.remove(any()) } answers {
+                values.remove(firstArg<String>())
+                editor
+            }
             every { manga.id } returns 1
             every { manga.source } returns 2
             every { sources.get(2) } returns source
@@ -100,6 +108,6 @@ class MangaDownloadStoreTest {
 
         fun download(id: Long) = MangaDownload(source, manga, chapters.first { it.id == id })
 
-        fun store() = MangaDownloadStore(context, sources, Json, getManga, getChapters)
+        fun store() = MangaDownloadStore(context, sources, Json, getManga, getChapters, migration)
     }
 }

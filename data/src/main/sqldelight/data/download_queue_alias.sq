@@ -1,0 +1,14 @@
+CREATE TABLE download_queue_alias(
+    old_parent_id INTEGER NOT NULL,
+    old_item_id INTEGER NOT NULL,
+    item_id INTEGER,
+    PRIMARY KEY(old_parent_id, old_item_id),
+    FOREIGN KEY(item_id) REFERENCES chapter (id) ON DELETE SET NULL
+);
+
+CREATE INDEX download_queue_alias_item_id_index ON download_queue_alias(item_id);
+
+getByLegacyIds:
+SELECT C.manga_id AS parent_id, A.item_id
+FROM download_queue_alias A LEFT JOIN chapter C ON C.id = A.item_id
+WHERE A.old_parent_id = :parentId AND A.old_item_id = :itemId;

@@ -120,8 +120,12 @@ internal class MangaDownloadLimiter(
     fun canRetryImage(error: Throwable, attempt: Long): Boolean {
         if (enabled || attempt >= 3) return false
         return generateSequence(error) { it.cause }.take(16).none {
-            it is SourceDownloadWaiting || it is SourceRequestPausedException || it is CloudflareChallengeException ||
-                it is CancellationException || it is HttpException && (it.code == 403 || it.code == 429)
+            it is SourceDownloadWaiting ||
+                it is SourceRequestPausedException ||
+                it is CloudflareChallengeException ||
+                it is CancellationException ||
+                it is HttpException &&
+                (it.code == 403 || it.code == 429)
         }
     }
 }
