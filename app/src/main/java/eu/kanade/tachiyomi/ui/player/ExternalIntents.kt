@@ -11,30 +11,21 @@ import android.os.Bundle
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import eu.kanade.domain.base.BasePreferences
-import eu.kanade.domain.track.anime.model.toDbTrack
-import eu.kanade.domain.track.anime.service.DelayedAnimeTrackingUpdateJob
-import eu.kanade.domain.track.anime.store.DelayedAnimeTrackingStore
+import eu.kanade.domain.track.anime.interactor.TrackEpisode
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
-import eu.kanade.tachiyomi.data.track.AnimeTracker
-import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.ui.player.loader.EpisodeLoader
 import eu.kanade.tachiyomi.ui.player.loader.HosterLoader
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import eu.kanade.tachiyomi.util.system.isOnline
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
-import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.entries.anime.interactor.GetAnime
 import tachiyomi.domain.entries.anime.model.Anime
@@ -45,8 +36,6 @@ import tachiyomi.domain.items.episode.interactor.UpdateEpisode
 import tachiyomi.domain.items.episode.model.Episode
 import tachiyomi.domain.items.episode.model.EpisodeUpdate
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
-import tachiyomi.domain.track.anime.interactor.GetAnimeTracks
-import tachiyomi.domain.track.anime.interactor.InsertAnimeTrack
 import tachiyomi.source.local.entries.anime.LocalAnimeSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -375,10 +364,7 @@ class ExternalIntents {
     private val getAnime: GetAnime = Injekt.get()
     private val sourceManager: AnimeSourceManager = Injekt.get()
     private val getEpisodesByAnimeId: GetEpisodesByAnimeId = Injekt.get()
-    private val getTracks: GetAnimeTracks = Injekt.get()
-    private val insertTrack: InsertAnimeTrack = Injekt.get()
     private val downloadManager: AnimeDownloadManager by injectLazy()
-    private val delayedTrackingStore: DelayedAnimeTrackingStore = Injekt.get()
     private val playerPreferences: PlayerPreferences = Injekt.get()
     private val downloadPreferences: DownloadPreferences = Injekt.get()
     private val trackPreferences: TrackPreferences = Injekt.get()
@@ -475,41 +461,7 @@ class ExternalIntents {
     private suspend fun updateTrackEpisodeSeen(episodeNumber: Double, anime: Anime) {
         if (!trackPreferences.autoUpdateTrack().get()) return
 
-        val trackerManager = Injekt.get<TrackerManager>()
-        val context = Injekt.get<Application>()
-
-        withIOContext {
-            getTracks.await(anime.id)
-                .mapNotNull { track ->
-                    val tracker = trackerManager.get(track.trackerId)
-                    if (tracker != null &&
-                        tracker.isLoggedIn &&
-                        tracker is AnimeTracker &&
-                        episodeNumber > track.lastEpisodeSeen
-                    ) {
-                        val updatedTrack = track.copy(lastEpisodeSeen = episodeNumber)
-
-                        // We want these to execute even if the presenter is destroyed and leaks
-                        // for a while. The view can still be garbage collected.
-                        async {
-                            runCatching {
-                                if (context.isOnline()) {
-                                    tracker.animeService.update(updatedTrack.toDbTrack(), true)
-                                    insertTrack.await(updatedTrack)
-                                } else {
-                                    delayedTrackingStore.addAnime(track.animeId, lastEpisodeSeen = episodeNumber)
-                                    DelayedAnimeTrackingUpdateJob.setupTask(context)
-                                }
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                }
-                .awaitAll()
-                .mapNotNull { it.exceptionOrNull() }
-                .forEach { logcat(LogPriority.INFO, it) }
-        }
+        Injekt.get<TrackEpisode>().await(Injekt.get<Application>(), anime.id, episodeNumber)
     }
 
     /**
