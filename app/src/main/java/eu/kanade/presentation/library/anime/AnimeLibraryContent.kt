@@ -38,8 +38,8 @@ fun AnimeLibraryContent(
     onChangeCurrentPage: (Int) -> Unit,
     onAnimeClicked: (Long) -> Unit,
     onContinueWatchingClicked: ((LibraryAnime) -> Unit)?,
-    onToggleSelection: (LibraryAnime) -> Unit,
-    onToggleRangeSelection: (LibraryAnime) -> Unit,
+    onToggleSelection: (AnimeLibraryItem) -> Unit,
+    onToggleRangeSelection: (AnimeLibraryItem) -> Unit,
     isRefreshing: Boolean,
     updateProgress: LibraryUpdateProgress?,
     onRefresh: (Category?) -> Boolean,
@@ -83,11 +83,11 @@ fun AnimeLibraryContent(
         )
 
         val notSelectionMode = selection.isEmpty()
-        val onClickAnime = { anime: LibraryAnime ->
+        val onClickAnime = { item: AnimeLibraryItem ->
             if (notSelectionMode) {
-                onAnimeClicked(anime.anime.id)
+                onAnimeClicked(item.libraryAnime.anime.id)
             } else {
-                onToggleSelection(anime)
+                onToggleSelection(item)
             }
         }
 

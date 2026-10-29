@@ -38,8 +38,8 @@ fun MangaLibraryContent(
     onChangeCurrentPage: (Int) -> Unit,
     onMangaClicked: (Long) -> Unit,
     onContinueReadingClicked: ((LibraryManga) -> Unit)?,
-    onToggleSelection: (LibraryManga) -> Unit,
-    onToggleRangeSelection: (LibraryManga) -> Unit,
+    onToggleSelection: (MangaLibraryItem) -> Unit,
+    onToggleRangeSelection: (MangaLibraryItem) -> Unit,
     isRefreshing: Boolean,
     updateProgress: LibraryUpdateProgress?,
     onRefresh: (Category?) -> Boolean,
@@ -83,11 +83,11 @@ fun MangaLibraryContent(
         )
 
         val notSelectionMode = selection.isEmpty()
-        val onClickManga = { manga: LibraryManga ->
+        val onClickManga = { item: MangaLibraryItem ->
             if (notSelectionMode) {
-                onMangaClicked(manga.manga.id)
+                onMangaClicked(item.libraryManga.manga.id)
             } else {
-                onToggleSelection(manga)
+                onToggleSelection(item)
             }
         }
 

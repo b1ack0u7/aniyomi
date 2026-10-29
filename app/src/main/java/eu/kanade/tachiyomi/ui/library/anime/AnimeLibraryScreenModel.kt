@@ -6,14 +6,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastDistinctBy
 import androidx.compose.ui.util.fastFilter
-import androidx.compose.ui.util.fastMap
-import androidx.compose.ui.util.fastMapNotNull
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.core.preference.asState
 import eu.kanade.core.util.fastFilterNot
-import eu.kanade.core.util.fastPartition
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.entries.anime.interactor.UpdateAnime
 import eu.kanade.domain.items.episode.interactor.SetSeenStatus
@@ -28,15 +25,18 @@ import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadCache
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.anime.getNameForAnimeInfo
+import eu.kanade.tachiyomi.ui.library.LibrarySelectionAnchor
 import eu.kanade.tachiyomi.ui.library.libraryTracksFlow
+import eu.kanade.tachiyomi.ui.library.selectLibraryRange
+import eu.kanade.tachiyomi.ui.library.updateLibrarySelectionAnchors
 import eu.kanade.tachiyomi.util.episode.getNextUnseen
 import eu.kanade.tachiyomi.util.removeBackgrounds
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentList
-import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -398,30 +398,33 @@ class AnimeLibraryScreenModel(
             val sourceNames = sources.mapValues { (_, source) -> source.getNameForAnimeInfo() }
             val downloadCounts = mutableMapOf<Long, Long>()
             animelibAnimeList
-                .map { animelibAnime ->
-                    // Display mode based on user preference: take it from global library setting or category
-                    AnimeLibraryItem(
-                        animelibAnime,
-                        downloadCount = if (prefs.downloadBadge) {
-                            downloadCounts.getOrPut(animelibAnime.id) {
-                                downloadManager.getDownloadCount(animelibAnime.anime).toLong()
-                            }
-                        } else {
-                            0
-                        },
-                        unseenCount = if (prefs.unseenBadge) animelibAnime.unseenCount else 0,
-                        isLocal = if (prefs.localBadge) animelibAnime.anime.isLocal() else false,
-                        sourceLanguage = if (prefs.languageBadge) {
-                            sources.getValue(animelibAnime.anime.source).lang
-                        } else {
-                            ""
-                        },
-                        sourceManager = sourceManager,
-                        cachedSourceName = sourceNames.getValue(animelibAnime.anime.source),
-                        cachedSourceLang = sources.getValue(animelibAnime.anime.source).lang,
-                    )
+                .flatMap { animelibAnime ->
+                    animelibAnime.categories.map { category ->
+                        // Display mode based on user preference: take it from global library setting or category
+                        AnimeLibraryItem(
+                            animelibAnime,
+                            category = category,
+                            downloadCount = if (prefs.downloadBadge) {
+                                downloadCounts.getOrPut(animelibAnime.id) {
+                                    downloadManager.getDownloadCount(animelibAnime.anime).toLong()
+                                }
+                            } else {
+                                0
+                            },
+                            unseenCount = if (prefs.unseenBadge) animelibAnime.unseenCount else 0,
+                            isLocal = if (prefs.localBadge) animelibAnime.anime.isLocal() else false,
+                            sourceLanguage = if (prefs.languageBadge) {
+                                sources.getValue(animelibAnime.anime.source).lang
+                            } else {
+                                ""
+                            },
+                            sourceManager = sourceManager,
+                            cachedSourceName = sourceNames.getValue(animelibAnime.anime.source),
+                            cachedSourceLang = sources.getValue(animelibAnime.anime.source).lang,
+                        )
+                    }
                 }
-                .groupBy { it.libraryAnime.category }
+                .groupBy { it.category }
         }
 
         return combine(getCategories.subscribe(), animelibAnimesFlow) { categories, animelibAnime ->
@@ -628,84 +631,23 @@ class AnimeLibraryScreenModel(
     }
 
     fun clearSelection() {
-        mutableState.update { it.copy(selection = persistentListOf()) }
+        mutableState.update { it.clearSelection() }
     }
 
-    fun toggleSelection(anime: LibraryAnime) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                if (list.fastAny { it.id == anime.id }) {
-                    list.removeAll { it.id == anime.id }
-                } else {
-                    list.add(anime)
-                }
-            }
-            state.copy(selection = newSelection)
-        }
+    fun toggleSelection(item: AnimeLibraryItem) {
+        mutableState.update { it.toggleSelection(item) }
     }
 
-    /**
-     * Selects all nimes between and including the given anime and the last pressed anime from the
-     * same category as the given anime
-     */
-    fun toggleRangeSelection(anime: LibraryAnime) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val lastSelected = list.lastOrNull()
-                if (lastSelected?.category != anime.category) {
-                    list.add(anime)
-                    return@mutate
-                }
-
-                val items = state.getAnimelibItemsByCategoryId(anime.category)
-                    ?.fastMap { it.libraryAnime }.orEmpty()
-                val lastAnimeIndex = items.indexOf(lastSelected)
-                val curAnimeIndex = items.indexOf(anime)
-
-                val selectedIds = list.fastMap { it.id }
-                val selectionRange = when {
-                    lastAnimeIndex < curAnimeIndex -> IntRange(lastAnimeIndex, curAnimeIndex)
-                    curAnimeIndex < lastAnimeIndex -> IntRange(curAnimeIndex, lastAnimeIndex)
-                    // We shouldn't reach this point
-                    else -> return@mutate
-                }
-                val newSelections = selectionRange.mapNotNull { index ->
-                    items[index].takeUnless { it.id in selectedIds }
-                }
-                list.addAll(newSelections)
-            }
-            state.copy(selection = newSelection)
-        }
+    fun toggleRangeSelection(item: AnimeLibraryItem) {
+        mutableState.update { it.toggleRangeSelection(item) }
     }
 
     fun selectAll(index: Int) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val categoryId = state.categories.getOrNull(index)?.id ?: -1
-                val selectedIds = list.fastMap { it.id }
-                state.getAnimelibItemsByCategoryId(categoryId)
-                    ?.fastMapNotNull { item ->
-                        item.libraryAnime.takeUnless { it.id in selectedIds }
-                    }
-                    ?.let { list.addAll(it) }
-            }
-            state.copy(selection = newSelection)
-        }
+        mutableState.update { it.selectAll(index) }
     }
 
     fun invertSelection(index: Int) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val categoryId = state.categories[index].id
-                val items = state.getAnimelibItemsByCategoryId(categoryId)?.fastMap { it.libraryAnime }.orEmpty()
-                val selectedIds = list.fastMap { it.id }
-                val (toRemove, toAdd) = items.fastPartition { it.id in selectedIds }
-                val toRemoveIds = toRemove.fastMap { it.id }
-                list.removeAll { it.id in toRemoveIds }
-                list.addAll(toAdd)
-            }
-            state.copy(selection = newSelection)
-        }
+        mutableState.update { it.invertSelection(index) }
     }
 
     fun search(query: String?) {
@@ -778,12 +720,65 @@ class AnimeLibraryScreenModel(
         val library: AnimeLibraryMap = emptyMap(),
         val searchQuery: String? = null,
         val selection: PersistentList<LibraryAnime> = persistentListOf(),
+        val selectionAnchors: PersistentList<LibrarySelectionAnchor> = persistentListOf(),
         val hasActiveFilters: Boolean = false,
         val showCategoryTabs: Boolean = false,
         val showAnimeCount: Boolean = false,
         val showAnimeContinueButton: Boolean = false,
         val dialog: Dialog? = null,
     ) {
+        internal fun clearSelection() = copy(selection = persistentListOf(), selectionAnchors = persistentListOf())
+
+        internal fun toggleSelection(item: AnimeLibraryItem): State {
+            val entry = item.libraryAnime
+            val newSelection = if (selection.any { it.id == entry.id }) {
+                selection.filterNot { it.id == entry.id }
+            } else {
+                selection + entry
+            }
+            return withSelection(newSelection, item.category)
+        }
+
+        internal fun toggleRangeSelection(item: AnimeLibraryItem): State {
+            val anchor = selectionAnchors.lastOrNull()
+            val newSelection = selectLibraryRange(
+                items = getAnimelibItemsByCategoryId(item.category)?.map { it.libraryAnime }.orEmpty(),
+                selection = selection,
+                target = item.libraryAnime,
+                sameCategory = anchor?.category == item.category,
+                anchorId = anchor?.id,
+                id = { it.id },
+            )
+            return withSelection(newSelection, item.category, item.libraryAnime.id)
+        }
+
+        internal fun selectAll(index: Int): State {
+            val category = categories.getOrNull(index)?.id ?: return this
+            val selectedIds = selection.mapTo(mutableSetOf()) { it.id }
+            val additions = getAnimelibItemsByCategoryId(category).orEmpty()
+                .mapNotNull { it.libraryAnime.takeIf { entry -> selectedIds.add(entry.id) } }
+            return withSelection(selection + additions, category)
+        }
+
+        internal fun invertSelection(index: Int): State {
+            val category = categories.getOrNull(index)?.id ?: return this
+            val items = getAnimelibItemsByCategoryId(category).orEmpty().map { it.libraryAnime }
+            val itemIds = items.mapTo(mutableSetOf()) { it.id }
+            val selectedIds = selection.mapTo(mutableSetOf()) { it.id }
+            val newSelection = selection.filterNot { it.id in itemIds } + items.filterNot { it.id in selectedIds }
+            return withSelection(newSelection, category)
+        }
+
+        private fun withSelection(entries: List<LibraryAnime>, category: Long, targetId: Long? = null) = copy(
+            selection = entries.toPersistentList(),
+            selectionAnchors = updateLibrarySelectionAnchors(
+                selectionAnchors,
+                entries.map { it.id },
+                category,
+                targetId,
+            ).toPersistentList(),
+        )
+
         private val libraryCount by lazy {
             library.values
                 .flatten()

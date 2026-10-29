@@ -39,8 +39,8 @@ fun AnimeLibraryPager(
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
     getLibraryForPage: (Int) -> List<AnimeLibraryItem>,
-    onClickAnime: (LibraryAnime) -> Unit,
-    onLongClickAnime: (LibraryAnime) -> Unit,
+    onClickAnime: (AnimeLibraryItem) -> Unit,
+    onLongClickAnime: (AnimeLibraryItem) -> Unit,
     onClickContinueWatching: ((LibraryAnime) -> Unit)?,
 ) {
     BoxWithConstraints {

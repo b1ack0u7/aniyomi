@@ -23,8 +23,8 @@ internal fun MangaLibraryCompactGrid(
     columns: Int,
     contentPadding: PaddingValues,
     selection: List<LibraryManga>,
-    onClick: (LibraryManga) -> Unit,
-    onLongClick: (LibraryManga) -> Unit,
+    onClick: (MangaLibraryItem) -> Unit,
+    onLongClick: (MangaLibraryItem) -> Unit,
     onClickContinueReading: ((LibraryManga) -> Unit)?,
     searchQuery: String?,
     onGlobalSearchClicked: () -> Unit,
@@ -61,8 +61,8 @@ internal fun MangaLibraryCompactGrid(
                         sourceLanguage = libraryItem.sourceLanguage,
                     )
                 },
-                onLongClick = { onLongClick(libraryItem.libraryManga) },
-                onClick = { onClick(libraryItem.libraryManga) },
+                onLongClick = { onLongClick(libraryItem) },
+                onClick = { onClick(libraryItem) },
                 onClickContinueViewing = if (onClickContinueReading != null && libraryItem.unreadCount > 0) {
                     { onClickContinueReading(libraryItem.libraryManga) }
                 } else {

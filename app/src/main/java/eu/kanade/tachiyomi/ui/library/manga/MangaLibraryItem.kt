@@ -10,6 +10,7 @@ import uy.kohesive.injekt.api.get
 
 class MangaLibraryItem(
     val libraryManga: LibraryManga,
+    val category: Long = libraryManga.categories.first(),
     var downloadCount: Long = -1,
     var unreadCount: Long = -1,
     var isLocal: Boolean = false,

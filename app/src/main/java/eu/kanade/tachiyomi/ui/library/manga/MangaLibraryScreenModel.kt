@@ -6,14 +6,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastDistinctBy
 import androidx.compose.ui.util.fastFilter
-import androidx.compose.ui.util.fastMap
-import androidx.compose.ui.util.fastMapNotNull
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.core.preference.asState
 import eu.kanade.core.util.fastFilterNot
-import eu.kanade.core.util.fastPartition
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.entries.manga.interactor.UpdateManga
 import eu.kanade.domain.items.chapter.interactor.SetReadStatus
@@ -27,14 +24,17 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.manga.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.library.LibrarySelectionAnchor
 import eu.kanade.tachiyomi.ui.library.libraryTracksFlow
+import eu.kanade.tachiyomi.ui.library.selectLibraryRange
+import eu.kanade.tachiyomi.ui.library.updateLibrarySelectionAnchors
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentList
-import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -384,30 +384,33 @@ class MangaLibraryScreenModel(
             val sourceNames = sources.mapValues { (_, source) -> source.getNameForMangaInfo() }
             val downloadCounts = mutableMapOf<Long, Long>()
             libraryMangaList
-                .map { libraryManga ->
-                    // Display mode based on user preference: take it from global library setting or category
-                    MangaLibraryItem(
-                        libraryManga,
-                        downloadCount = if (prefs.downloadBadge) {
-                            downloadCounts.getOrPut(libraryManga.id) {
-                                downloadManager.getDownloadCount(libraryManga.manga).toLong()
-                            }
-                        } else {
-                            0
-                        },
-                        unreadCount = if (prefs.unreadBadge) libraryManga.unreadCount else 0,
-                        isLocal = if (prefs.localBadge) libraryManga.manga.isLocal() else false,
-                        sourceLanguage = if (prefs.languageBadge) {
-                            sources.getValue(libraryManga.manga.source).lang
-                        } else {
-                            ""
-                        },
-                        sourceManager = sourceManager,
-                        cachedSourceName = sourceNames.getValue(libraryManga.manga.source),
-                        cachedSourceLang = sources.getValue(libraryManga.manga.source).lang,
-                    )
+                .flatMap { libraryManga ->
+                    libraryManga.categories.map { category ->
+                        // Display mode based on user preference: take it from global library setting or category
+                        MangaLibraryItem(
+                            libraryManga,
+                            category = category,
+                            downloadCount = if (prefs.downloadBadge) {
+                                downloadCounts.getOrPut(libraryManga.id) {
+                                    downloadManager.getDownloadCount(libraryManga.manga).toLong()
+                                }
+                            } else {
+                                0
+                            },
+                            unreadCount = if (prefs.unreadBadge) libraryManga.unreadCount else 0,
+                            isLocal = if (prefs.localBadge) libraryManga.manga.isLocal() else false,
+                            sourceLanguage = if (prefs.languageBadge) {
+                                sources.getValue(libraryManga.manga.source).lang
+                            } else {
+                                ""
+                            },
+                            sourceManager = sourceManager,
+                            cachedSourceName = sourceNames.getValue(libraryManga.manga.source),
+                            cachedSourceLang = sources.getValue(libraryManga.manga.source).lang,
+                        )
+                    }
                 }
-                .groupBy { it.libraryManga.category }
+                .groupBy { it.category }
         }
 
         return combine(getCategories.subscribe(), libraryMangasFlow) { categories, libraryManga ->
@@ -613,84 +616,23 @@ class MangaLibraryScreenModel(
     }
 
     fun clearSelection() {
-        mutableState.update { it.copy(selection = persistentListOf()) }
+        mutableState.update { it.clearSelection() }
     }
 
-    fun toggleSelection(manga: LibraryManga) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                if (list.fastAny { it.id == manga.id }) {
-                    list.removeAll { it.id == manga.id }
-                } else {
-                    list.add(manga)
-                }
-            }
-            state.copy(selection = newSelection)
-        }
+    fun toggleSelection(item: MangaLibraryItem) {
+        mutableState.update { it.toggleSelection(item) }
     }
 
-    /**
-     * Selects all mangas between and including the given manga and the last pressed manga from the
-     * same category as the given manga
-     */
-    fun toggleRangeSelection(manga: LibraryManga) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val lastSelected = list.lastOrNull()
-                if (lastSelected?.category != manga.category) {
-                    list.add(manga)
-                    return@mutate
-                }
-
-                val items = state.getLibraryItemsByCategoryId(manga.category)
-                    ?.fastMap { it.libraryManga }.orEmpty()
-                val lastMangaIndex = items.indexOf(lastSelected)
-                val curMangaIndex = items.indexOf(manga)
-
-                val selectedIds = list.fastMap { it.id }
-                val selectionRange = when {
-                    lastMangaIndex < curMangaIndex -> IntRange(lastMangaIndex, curMangaIndex)
-                    curMangaIndex < lastMangaIndex -> IntRange(curMangaIndex, lastMangaIndex)
-                    // We shouldn't reach this point
-                    else -> return@mutate
-                }
-                val newSelections = selectionRange.mapNotNull { index ->
-                    items[index].takeUnless { it.id in selectedIds }
-                }
-                list.addAll(newSelections)
-            }
-            state.copy(selection = newSelection)
-        }
+    fun toggleRangeSelection(item: MangaLibraryItem) {
+        mutableState.update { it.toggleRangeSelection(item) }
     }
 
     fun selectAll(index: Int) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val categoryId = state.categories.getOrNull(index)?.id ?: -1
-                val selectedIds = list.fastMap { it.id }
-                state.getLibraryItemsByCategoryId(categoryId)
-                    ?.fastMapNotNull { item ->
-                        item.libraryManga.takeUnless { it.id in selectedIds }
-                    }
-                    ?.let { list.addAll(it) }
-            }
-            state.copy(selection = newSelection)
-        }
+        mutableState.update { it.selectAll(index) }
     }
 
     fun invertSelection(index: Int) {
-        mutableState.update { state ->
-            val newSelection = state.selection.mutate { list ->
-                val categoryId = state.categories[index].id
-                val items = state.getLibraryItemsByCategoryId(categoryId)?.fastMap { it.libraryManga }.orEmpty()
-                val selectedIds = list.fastMap { it.id }
-                val (toRemove, toAdd) = items.fastPartition { it.id in selectedIds }
-                val toRemoveIds = toRemove.fastMap { it.id }
-                list.removeAll { it.id in toRemoveIds }
-                list.addAll(toAdd)
-            }
-            state.copy(selection = newSelection)
-        }
+        mutableState.update { it.invertSelection(index) }
     }
 
     fun search(query: String?) {
@@ -763,12 +705,65 @@ class MangaLibraryScreenModel(
         val library: MangaLibraryMap = emptyMap(),
         val searchQuery: String? = null,
         val selection: PersistentList<LibraryManga> = persistentListOf(),
+        val selectionAnchors: PersistentList<LibrarySelectionAnchor> = persistentListOf(),
         val hasActiveFilters: Boolean = false,
         val showCategoryTabs: Boolean = false,
         val showMangaCount: Boolean = false,
         val showMangaContinueButton: Boolean = false,
         val dialog: Dialog? = null,
     ) {
+        internal fun clearSelection() = copy(selection = persistentListOf(), selectionAnchors = persistentListOf())
+
+        internal fun toggleSelection(item: MangaLibraryItem): State {
+            val entry = item.libraryManga
+            val newSelection = if (selection.any { it.id == entry.id }) {
+                selection.filterNot { it.id == entry.id }
+            } else {
+                selection + entry
+            }
+            return withSelection(newSelection, item.category)
+        }
+
+        internal fun toggleRangeSelection(item: MangaLibraryItem): State {
+            val anchor = selectionAnchors.lastOrNull()
+            val newSelection = selectLibraryRange(
+                items = getLibraryItemsByCategoryId(item.category)?.map { it.libraryManga }.orEmpty(),
+                selection = selection,
+                target = item.libraryManga,
+                sameCategory = anchor?.category == item.category,
+                anchorId = anchor?.id,
+                id = { it.id },
+            )
+            return withSelection(newSelection, item.category, item.libraryManga.id)
+        }
+
+        internal fun selectAll(index: Int): State {
+            val category = categories.getOrNull(index)?.id ?: return this
+            val selectedIds = selection.mapTo(mutableSetOf()) { it.id }
+            val additions = getLibraryItemsByCategoryId(category).orEmpty()
+                .mapNotNull { it.libraryManga.takeIf { entry -> selectedIds.add(entry.id) } }
+            return withSelection(selection + additions, category)
+        }
+
+        internal fun invertSelection(index: Int): State {
+            val category = categories.getOrNull(index)?.id ?: return this
+            val items = getLibraryItemsByCategoryId(category).orEmpty().map { it.libraryManga }
+            val itemIds = items.mapTo(mutableSetOf()) { it.id }
+            val selectedIds = selection.mapTo(mutableSetOf()) { it.id }
+            val newSelection = selection.filterNot { it.id in itemIds } + items.filterNot { it.id in selectedIds }
+            return withSelection(newSelection, category)
+        }
+
+        private fun withSelection(entries: List<LibraryManga>, category: Long, targetId: Long? = null) = copy(
+            selection = entries.toPersistentList(),
+            selectionAnchors = updateLibrarySelectionAnchors(
+                selectionAnchors,
+                entries.map { it.id },
+                category,
+                targetId,
+            ).toPersistentList(),
+        )
+
         private val libraryCount by lazy {
             library.values
                 .flatten()

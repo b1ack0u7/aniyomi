@@ -26,8 +26,8 @@ internal fun AnimeLibraryList(
     containerHeight: Int,
     contentPadding: PaddingValues,
     selection: List<LibraryAnime>,
-    onClick: (LibraryAnime) -> Unit,
-    onLongClick: (LibraryAnime) -> Unit,
+    onClick: (AnimeLibraryItem) -> Unit,
+    onLongClick: (AnimeLibraryItem) -> Unit,
     onClickContinueWatching: ((LibraryAnime) -> Unit)?,
     searchQuery: String?,
     onGlobalSearchClicked: () -> Unit,
@@ -69,8 +69,8 @@ internal fun AnimeLibraryList(
                         sourceLanguage = libraryItem.sourceLanguage,
                     )
                 },
-                onLongClick = { onLongClick(libraryItem.libraryAnime) },
-                onClick = { onClick(libraryItem.libraryAnime) },
+                onLongClick = { onLongClick(libraryItem) },
+                onClick = { onClick(libraryItem) },
                 onClickContinueViewing = if (onClickContinueWatching != null && libraryItem.unseenCount > 0) {
                     { onClickContinueWatching(libraryItem.libraryAnime) }
                 } else {

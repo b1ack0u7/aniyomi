@@ -10,6 +10,7 @@ import uy.kohesive.injekt.api.get
 
 data class AnimeLibraryItem(
     val libraryAnime: LibraryAnime,
+    val category: Long = libraryAnime.categories.first(),
     var downloadCount: Long = -1,
     var unseenCount: Long = -1,
     var isLocal: Boolean = false,

@@ -39,8 +39,8 @@ fun MangaLibraryPager(
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
     getLibraryForPage: (Int) -> List<MangaLibraryItem>,
-    onClickManga: (LibraryManga) -> Unit,
-    onLongClickManga: (LibraryManga) -> Unit,
+    onClickManga: (MangaLibraryItem) -> Unit,
+    onLongClickManga: (MangaLibraryItem) -> Unit,
     onClickContinueReading: ((LibraryManga) -> Unit)?,
 ) {
     BoxWithConstraints {
