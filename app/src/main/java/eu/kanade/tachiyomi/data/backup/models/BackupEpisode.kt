@@ -32,6 +32,18 @@ data class BackupEpisode(
     @ProtoNumber(503) var previewUrl: String? = null,
 
 ) {
+    fun historyMetadata() = BackupEpisode(
+        url = url,
+        name = name,
+        scanlator = scanlator,
+        dateFetch = dateFetch,
+        dateUpload = dateUpload,
+        episodeNumber = episodeNumber,
+        sourceOrder = sourceOrder,
+        summary = summary,
+        previewUrl = previewUrl,
+    )
+
     fun toEpisodeImpl(): Episode {
         return Episode.create().copy(
             url = this@BackupEpisode.url,

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.library.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateJob
 import eu.kanade.tachiyomi.source.sourcePreferences
+import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.plusAssign
@@ -34,50 +35,71 @@ class PreferenceRestorer(
 ) {
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
-        backupCategories: List<BackupCategory>?,
-    ) {
-        restorePreferences(
-            preferences,
-            preferenceStore,
-            backupCategories,
-        )
+        backupMangaCategories: List<BackupCategory>?,
+        backupAnimeCategories: List<BackupCategory>?,
+    ): List<String> {
+        val errors = mutableListOf<String>()
+        val mangaMapping = backupMangaCategories?.let {
+            recover(errors, "App settings: Failed to map manga categories") {
+                categoryMapping(it, getMangaCategories.await())
+            }
+        }
+        val animeMapping = backupAnimeCategories?.let {
+            recover(errors, "App settings: Failed to map anime categories") {
+                categoryMapping(it, getAnimeCategories.await())
+            }
+        }
+        val categoryMappings =
+            (LibraryPreferences.mangaCategoryPreferenceKeys + DownloadPreferences.mangaCategoryPreferenceKeys)
+                .associateWith { mangaMapping } +
+                (LibraryPreferences.animeCategoryPreferenceKeys + DownloadPreferences.animeCategoryPreferenceKeys)
+                    .associateWith { animeMapping }
+        errors += restorePreferences(preferences, preferenceStore, "App settings", categoryMappings)
 
-        AnimeLibraryUpdateJob.setupTask(context)
-        MangaLibraryUpdateJob.setupTask(context)
-        BackupCreateJob.setupTask(context)
+        recover(errors, "App settings: Failed to schedule anime library updates") {
+            AnimeLibraryUpdateJob.setupTask(context)
+        }
+        recover(errors, "App settings: Failed to schedule manga library updates") {
+            MangaLibraryUpdateJob.setupTask(context)
+        }
+        recover(errors, "App settings: Failed to schedule backups") {
+            BackupCreateJob.setupTask(context)
+        }
+        return errors
     }
 
-    suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {
-        preferences.forEach {
-            val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
-            restorePreferences(it.prefs, sourcePrefs)
+    suspend fun restoreSource(preferences: List<BackupSourcePreferences>): List<String> {
+        val errors = mutableListOf<String>()
+        preferences.forEachIndexed { index, source ->
+            val scope = "Source settings #${index + 1}"
+            recover(errors, "$scope: Failed to open preferences") {
+                val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(source.sourceKey))
+                errors += restorePreferences(source.prefs, sourcePrefs, scope)
+            }
         }
+        return errors
     }
 
     private suspend fun restorePreferences(
         toRestore: List<BackupPreference>,
         preferenceStore: PreferenceStore,
-        backupCategories: List<BackupCategory>? = null,
-    ) {
-        val allMangaCategories = if (backupCategories != null) getMangaCategories.await() else emptyList()
-        val allAnimeCategories = if (backupCategories != null) getAnimeCategories.await() else emptyList()
-
-        val mangaCategoriesByName = allMangaCategories.associateBy { it.name }
-        val animeCategoriesByName = allAnimeCategories.associateBy { it.name }
-        val backupCategoriesById = backupCategories?.associateBy { it.id.toString() }.orEmpty()
-
-        val prefs = preferenceStore.getAll()
-        toRestore.forEach { (key, value) ->
-            try {
+        scope: String,
+        categoryMappings: Map<String, Map<String, String>?> = emptyMap(),
+    ): List<String> {
+        if (toRestore.isEmpty()) return emptyList()
+        val errors = mutableListOf<String>()
+        val prefs = recover(errors, "$scope: Failed to read existing preferences") {
+            preferenceStore.getAll()
+        } ?: return errors
+        toRestore.forEachIndexed { index, (key, value) ->
+            recover(errors, "$scope: Failed to restore preference #${index + 1}") {
                 when (value) {
                     is IntPreferenceValue -> {
                         if (prefs[key] is Int?) {
-                            val newValue = if (key == LibraryPreferences.DEFAULT_MANGA_CATEGORY_PREF_KEY) {
-                                backupCategoriesById[value.value.toString()]
-                                    ?.let { mangaCategoriesByName[it.name]?.id?.toInt() }
-                            } else if (key == LibraryPreferences.DEFAULT_ANIME_CATEGORY_PREF_KEY) {
-                                backupCategoriesById[value.value.toString()]
-                                    ?.let { animeCategoriesByName[it.name]?.id?.toInt() }
+                            val newValue = if (key in categoryMappings) {
+                                categoryMappings[key]?.let { mapping ->
+                                    if (value.value == -1) -1 else mapping[value.value.toString()]?.toIntOrNull()
+                                }
                             } else {
                                 value.value
                             }
@@ -107,49 +129,37 @@ class PreferenceRestorer(
                     }
                     is StringSetPreferenceValue -> {
                         if (prefs[key] is Set<*>?) {
-                            val restored = restoreCategoriesPreference(
-                                key,
-                                value.value,
-                                preferenceStore,
-                                backupCategoriesById,
-                                mangaCategoriesByName,
-                                animeCategoriesByName,
-                            )
-                            if (!restored) preferenceStore.getStringSet(key).set(value.value)
+                            if (key in categoryMappings) {
+                                val ids = value.value.mapNotNull { categoryMappings[key]?.get(it) }
+                                if (ids.isNotEmpty()) preferenceStore.getStringSet(key) += ids
+                            } else {
+                                preferenceStore.getStringSet(key).set(value.value)
+                            }
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.e("PreferenceRestorer", "Failed to restore preference <$key>", e)
             }
         }
+        return errors
     }
 
-    private fun restoreCategoriesPreference(
-        key: String,
-        value: Set<String>,
-        preferenceStore: PreferenceStore,
-        backupCategoriesById: Map<String, BackupCategory>,
-        mangaCategoriesByName: Map<String, Category>,
-        animeCategoriesByName: Map<String, Category>,
-    ): Boolean {
-        val categoryPreferences = LibraryPreferences.categoryPreferenceKeys + DownloadPreferences.categoryPreferenceKeys
-        if (key !in categoryPreferences) return false
+    private inline fun <T> recover(errors: MutableList<String>, message: String, block: () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        errors += message
+        Log.e("PreferenceRestorer", message)
+        null
+    }
 
-        val ids = value.flatMap {
-            listOf(
-                backupCategoriesById[it]?.name?.let { name ->
-                    mangaCategoriesByName[name]?.id?.toString()
-                },
-                backupCategoriesById[it]?.name?.let { name ->
-                    animeCategoriesByName[name]?.id?.toString()
-                },
-            )
-        }.filterNotNull()
-
-        if (ids.isNotEmpty()) {
-            preferenceStore.getStringSet(key) += ids
-        }
-        return true
+    private fun categoryMapping(
+        backupCategories: List<BackupCategory>,
+        categories: List<Category>,
+    ): Map<String, String> {
+        val categoriesByName = categories.associateBy { it.name }
+        return backupCategories.mapNotNull { backup ->
+            categoriesByName[backup.name]?.let { backup.id.toString() to it.id.toString() }
+        }.toMap() + (Category.UNCATEGORIZED_ID.toString() to Category.UNCATEGORIZED_ID.toString())
     }
 }

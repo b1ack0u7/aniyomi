@@ -16,20 +16,33 @@ class MangaCategoriesRestorer(
     suspend operator fun invoke(backupCategories: List<BackupCategory>) {
         if (backupCategories.isNotEmpty()) {
             val dbCategories = getMangaCategories.await()
-            val dbCategoriesByName = dbCategories.associateBy { it.name }
+            val dbCategoriesByName = dbCategories.associateBy { it.name }.toMutableMap()
             var nextOrder = dbCategories.maxOfOrNull { it.order }?.plus(1) ?: 0
 
             val categories = backupCategories
                 .sortedBy { it.order }
                 .map {
                     val dbCategory = dbCategoriesByName[it.name]
-                    if (dbCategory != null) return@map dbCategory
+                    if (dbCategory != null) {
+                        val hidden = it.hidden ?: return@map dbCategory
+                        mangaHandler.await {
+                            categoryQueries.update(null, null, null, if (hidden) 1L else 0L, dbCategory.id)
+                        }
+                        return@map dbCategory.copy(hidden = hidden).also { category ->
+                            dbCategoriesByName[category.name] = category
+                        }
+                    }
                     val order = nextOrder++
-                    mangaHandler.awaitOneExecutable {
-                        categoriesQueries.insert(it.name, order, it.flags)
-                        categoriesQueries.selectLastInsertedRowId()
+                    mangaHandler.await(inTransaction = true) {
+                        categoryQueries.insert(it.name, order, it.flags)
+                        val id = categoryQueries.selectLastInsertedRowId().executeAsOne()
+                        it.hidden?.let { hidden ->
+                            categoryQueries.update(null, null, null, if (hidden) 1L else 0L, id)
+                        }
+                        id
                     }
                         .let { id -> it.toCategory(id).copy(order = order) }
+                        .also { category -> dbCategoriesByName[category.name] = category }
                 }
 
             libraryPreferences.categorizedDisplaySettings().set(

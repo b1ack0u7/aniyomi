@@ -26,6 +26,16 @@ data class BackupChapter(
     @ProtoNumber(12) var version: Long = 0,
     @ProtoNumber(13) var memo: ByteArray = EMPTY_JSON_OBJECT_BYTES,
 ) {
+    fun historyMetadata() = BackupChapter(
+        url = url,
+        name = name,
+        scanlator = scanlator,
+        dateFetch = dateFetch,
+        dateUpload = dateUpload,
+        chapterNumber = chapterNumber,
+        sourceOrder = sourceOrder,
+    )
+
     fun toChapterImpl(): Chapter {
         return Chapter.create().copy(
             url = this@BackupChapter.url,

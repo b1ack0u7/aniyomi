@@ -40,7 +40,8 @@ data class BackupOptions(
         appSettings ||
         extensionRepoSettings ||
         customButton ||
-        sourceSettings
+        sourceSettings ||
+        extensions
 
     companion object {
         val libraryOptions = persistentListOf(

@@ -63,7 +63,7 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
     override suspend fun getForegroundInfo(): ForegroundInfo {
         return ForegroundInfo(
             Notifications.ID_RESTORE_PROGRESS,
-            notifier.showRestoreProgress().build(),
+            notifier.showRestoreProgress(),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             } else {

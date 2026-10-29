@@ -1,10 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
-import data.Chapters
-import data.Excluded_scanlators
 import data.GetBackupHistoryByMangaIds
 import data.GetCategoryOrdersByMangaIds
-import data.Manga_sync
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.backup.models.BackupHistory
 import io.kotest.matchers.shouldBe
@@ -21,6 +18,9 @@ import tachiyomi.data.handlers.manga.MangaDatabaseHandler
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.entries.manga.repository.MangaRepository
 import java.util.Date
+import data.Chapter as Chapters
+import data.Excluded_scanlator as Excluded_scanlators
+import data.Manga_track as Manga_sync
 
 class MangaBackupCreatorTest {
 
@@ -76,6 +76,7 @@ class MangaBackupCreatorTest {
         )
         coEvery { repository.getBackupMangaBatch(2, 2, 100, true) } returns emptyList()
         coEvery { handler.awaitList<Any>(any(), any()) } returnsMany listOf(
+            emptyList(),
             listOf(
                 GetBackupHistoryByMangaIds(2, "/second", Date(234), 600),
                 GetBackupHistoryByMangaIds(1, "/first", null, 900),
@@ -88,7 +89,7 @@ class MangaBackupCreatorTest {
         backup[0].history shouldBe listOf(BackupHistory("/first", 0, 900))
         backup[1].history shouldBe listOf(BackupHistory("/second", 234, 600))
         backup.flatMap { it.chapters } shouldBe emptyList()
-        coVerify(exactly = 2) { handler.awaitList<Any>(any(), any()) }
+        coVerify(exactly = 3) { handler.awaitList<Any>(any(), any()) }
     }
 
     @Test
@@ -146,25 +147,25 @@ class MangaBackupCreatorTest {
     @Test
     fun `batched related rows keep progress categories tracking and title associations`() = runBlocking<Unit> {
         val child = Chapters(
-            _id = 10,
+            id = 10,
             manga_id = 1,
-            url = "/first/chapter",
-            name = "Saved chapter",
-            scanlator = "Group",
-            read = true,
-            bookmark = true,
-            last_page_read = 23,
-            chapter_number = 2.5,
-            source_order = 3,
-            date_fetch = 45,
-            date_upload = 67,
+            remote_url = "/first/chapter",
+            remote_name = "Saved chapter",
+            remote_scanlator = "Group",
+            user_read = true,
+            user_bookmark = true,
+            user_last_page_read = 23,
+            remote_chapter_number = 2.5,
+            remote_source_order = 3,
+            state_date_fetch = 45,
+            remote_date_upload = 67,
             last_modified_at = 89,
             version = 4,
             is_syncing = 0,
-            memo = JsonObject(mapOf("custom" to JsonPrimitive("child"))),
+            remote_memo = JsonObject(mapOf("custom" to JsonPrimitive("child"))),
         )
         val track = Manga_sync(
-            _id = 100,
+            id = 100,
             manga_id = 2,
             sync_id = 1,
             remote_id = 12345678901,
@@ -195,9 +196,9 @@ class MangaBackupCreatorTest {
         val backup = creator(options.copy(chapters = true, categories = true, tracking = true)).toList()
 
         val savedChild = backup[0].chapters.single()
-        savedChild.url shouldBe child.url
-        savedChild.name shouldBe child.name
-        savedChild.scanlator shouldBe child.scanlator
+        savedChild.url shouldBe child.remote_url
+        savedChild.name shouldBe child.remote_name
+        savedChild.scanlator shouldBe child.remote_scanlator
         savedChild.read shouldBe true
         savedChild.bookmark shouldBe true
         savedChild.lastPageRead shouldBe 23L
@@ -207,7 +208,7 @@ class MangaBackupCreatorTest {
         savedChild.dateUpload shouldBe 67L
         savedChild.lastModifiedAt shouldBe 89L
         savedChild.version shouldBe 4L
-        savedChild.toChapterImpl().memo shouldBe child.memo
+        savedChild.toChapterImpl().memo shouldBe child.remote_memo
         backup[1].chapters shouldBe emptyList()
         backup[0].categories shouldBe listOf(3L)
         backup[1].categories shouldBe listOf(7L)

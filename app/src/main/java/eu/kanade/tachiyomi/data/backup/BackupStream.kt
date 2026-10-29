@@ -33,7 +33,20 @@ class BackupWriter(
         require(metadata.backupManga.isEmpty() && metadata.backupAnime.isEmpty())
         val bytes = parser.encodeToByteArray(Backup.serializer(), metadata)
         sink.write(bytes)
-        if (bytes.isNotEmpty()) isEmpty = false
+        if (
+            metadata.backupCategories.isNotEmpty() ||
+            metadata.backupAnimeCategories.isNotEmpty() ||
+            metadata.backupSources.isNotEmpty() ||
+            metadata.backupAnimeSources.isNotEmpty() ||
+            metadata.backupPreferences.isNotEmpty() ||
+            metadata.backupSourcePreferences.isNotEmpty() ||
+            metadata.backupMangaExtensionRepo.isNotEmpty() ||
+            metadata.backupAnimeExtensionRepo.isNotEmpty() ||
+            metadata.backupExtensions.isNotEmpty() ||
+            metadata.backupCustomButton.isNotEmpty()
+        ) {
+            isEmpty = false
+        }
     }
 
     private fun writeEntry(field: Long, bytes: ByteArray) {
@@ -145,7 +158,7 @@ class BackupReader(
         if (entryLength != NO_ENTRY) skipEntry()
         while (nextEntry() != null) skipEntry()
         val bytes = metadata.readByteArray()
-        val isLegacy = BackupDetector.isLegacyBackup(bytes)
+        val isLegacy = BackupDetector.isLegacyBackup(bytes, hasLegacyAnime = legacyAnimeCount > 0)
         val backup = if (isLegacy) {
             decode(LegacyBackup.serializer(), bytes).toBackup()
         } else {

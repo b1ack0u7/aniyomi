@@ -151,9 +151,8 @@ class BackupRestorer(
                 if (options.appSettings) {
                     restoreAppPreferences(
                         backup.backupPreferences,
-                        backup.backupCategories.takeIf {
-                            options.categories
-                        },
+                        backup.backupCategories.takeIf { options.categories },
+                        backup.backupAnimeCategories.takeIf { options.categories },
                     )
                 }
                 if (options.sourceSettings) {
@@ -210,7 +209,10 @@ class BackupRestorer(
                 val parentId = parent?.let { restoredIds[it.offset] }
                 check(parent == null || parentId != null) { "Anime parent could not be restored" }
                 val entry = store.readAnime(index)
-                restoredIds[index.offset] = animeRestorer.restore(entry, backupAnimeCategories, parentId)
+                restoredIds[index.offset] = animeRestorer.restore(entry, backupAnimeCategories, parentId) { warning ->
+                    val sourceName = animeSourceMapping[index.source] ?: index.source.toString()
+                    errors.add(Date() to "${index.title} [$sourceName]: $warning")
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -236,7 +238,10 @@ class BackupRestorer(
             ensureActive()
             val entry = store.readManga(index)
             try {
-                mangaRestorer.restore(entry, backupMangaCategories)
+                mangaRestorer.restore(entry, backupMangaCategories) { warning ->
+                    val sourceName = mangaSourceMapping[entry.source] ?: entry.source.toString()
+                    errors.add(Date() to "${entry.title} [$sourceName]: $warning")
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -251,12 +256,12 @@ class BackupRestorer(
 
     private fun CoroutineScope.restoreAppPreferences(
         preferences: List<BackupPreference>,
-        categories: List<BackupCategory>?,
+        mangaCategories: List<BackupCategory>?,
+        animeCategories: List<BackupCategory>?,
     ) = launch {
         ensureActive()
-        preferenceRestorer.restoreApp(
-            preferences,
-            categories,
+        errors.addAll(
+            preferenceRestorer.restoreApp(preferences, mangaCategories, animeCategories).map { Date() to it },
         )
 
         restoreProgress.incrementAndGet()
@@ -270,7 +275,7 @@ class BackupRestorer(
 
     private fun CoroutineScope.restoreSourcePreferences(preferences: List<BackupSourcePreferences>) = launch {
         ensureActive()
-        preferenceRestorer.restoreSource(preferences)
+        errors.addAll(preferenceRestorer.restoreSource(preferences).map { Date() to it })
 
         restoreProgress.incrementAndGet()
         notifier.showRestoreProgress(

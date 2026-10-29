@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
-import dataanime.Anime_sync
-import dataanime.Episodes
 import dataanime.GetBackupHistoryByAnimeIds
 import dataanime.GetCategoryOrdersByAnimeIds
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -19,6 +17,8 @@ import tachiyomi.data.handlers.anime.AnimeDatabaseHandler
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.repository.AnimeRepository
 import java.util.Date
+import dataanime.Anime_track as Anime_sync
+import dataanime.Episode as Episodes
 
 class AnimeBackupCreatorTest {
 
@@ -72,6 +72,7 @@ class AnimeBackupCreatorTest {
         )
         coEvery { repository.getBackupAnimeBatch(2, 2, 100, true) } returns emptyList()
         coEvery { handler.awaitList<Any>(any(), any()) } returnsMany listOf(
+            emptyList(),
             listOf(
                 GetBackupHistoryByAnimeIds(2, "/second", Date(234)),
                 GetBackupHistoryByAnimeIds(1, "/first", null),
@@ -83,7 +84,7 @@ class AnimeBackupCreatorTest {
         backup[0].history shouldBe listOf(BackupAnimeHistory("/first", 0))
         backup[1].history shouldBe listOf(BackupAnimeHistory("/second", 234))
         backup.flatMap { it.episodes } shouldBe emptyList()
-        coVerify(exactly = 1) { handler.awaitList<Any>(any(), any()) }
+        coVerify(exactly = 2) { handler.awaitList<Any>(any(), any()) }
     }
 
     @Test
@@ -149,28 +150,28 @@ class AnimeBackupCreatorTest {
     @Test
     fun `batched related rows keep progress categories tracking and title associations`() = runBlocking<Unit> {
         val child = Episodes(
-            _id = 10,
+            id = 10,
             anime_id = 1,
-            url = "/first/episode",
-            name = "Saved episode",
-            scanlator = "Group",
-            seen = true,
-            bookmark = true,
-            last_second_seen = 23,
-            total_seconds = 1440,
-            episode_number = 2.5,
-            source_order = 3,
-            date_fetch = 45,
-            date_upload = 67,
+            remote_url = "/first/episode",
+            remote_name = "Saved episode",
+            remote_scanlator = "Group",
+            user_seen = true,
+            user_bookmark = true,
+            user_last_second_seen = 23,
+            remote_total_seconds = 1440,
+            remote_episode_number = 2.5,
+            remote_source_order = 3,
+            state_date_fetch = 45,
+            remote_date_upload = 67,
             last_modified_at = 89,
             version = 4,
             is_syncing = 0,
-            summary = "Summary",
-            preview_url = "/preview",
-            fillermark = true,
+            remote_summary = "Summary",
+            remote_preview = "/preview",
+            user_fillermark = true,
         )
         val track = Anime_sync(
-            _id = 100,
+            id = 100,
             anime_id = 2,
             sync_id = 1,
             remote_id = 12345678901,
@@ -200,9 +201,9 @@ class AnimeBackupCreatorTest {
         val backup = creator(options.copy(chapters = true, categories = true, tracking = true)).toList()
 
         val savedChild = backup[0].episodes.single()
-        savedChild.url shouldBe child.url
-        savedChild.name shouldBe child.name
-        savedChild.scanlator shouldBe child.scanlator
+        savedChild.url shouldBe child.remote_url
+        savedChild.name shouldBe child.remote_name
+        savedChild.scanlator shouldBe child.remote_scanlator
         savedChild.seen shouldBe true
         savedChild.bookmark shouldBe true
         savedChild.lastSecondSeen shouldBe 23L
@@ -213,8 +214,8 @@ class AnimeBackupCreatorTest {
         savedChild.lastModifiedAt shouldBe 89L
         savedChild.version shouldBe 4L
         savedChild.totalSeconds shouldBe 1440L
-        savedChild.summary shouldBe child.summary
-        savedChild.previewUrl shouldBe child.preview_url
+        savedChild.summary shouldBe child.remote_summary
+        savedChild.previewUrl shouldBe child.remote_preview
         savedChild.fillermark shouldBe true
         backup[1].episodes shouldBe emptyList()
         backup[0].categories shouldBe listOf(3L)

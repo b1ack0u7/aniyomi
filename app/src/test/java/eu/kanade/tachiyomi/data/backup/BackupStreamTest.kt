@@ -96,6 +96,33 @@ class BackupStreamTest {
     }
 
     @Test
+    fun `legacy metadata and titles are detected without a source list`() {
+        val expected = backup()
+        listOf(
+            LegacyBackup(backupAnime = expected.backupAnime),
+            LegacyBackup(backupAnimeCategories = expected.backupAnimeCategories),
+            LegacyBackup(backupExtensions = expected.backupExtensions),
+            LegacyBackup(backupAnimeExtensionRepo = expected.backupAnimeExtensionRepo),
+            LegacyBackup(backupMangaExtensionRepo = expected.backupMangaExtensionRepo),
+            LegacyBackup(backupCustomButton = expected.backupCustomButton),
+        ).forEach { legacy ->
+            val bytes = parser.encodeToByteArray(LegacyBackup.serializer(), legacy)
+            val summary = BackupReader(Buffer().write(bytes), parser).use { it.readSummary() }
+            summary.isLegacy shouldBe true
+            encode(read(bytes, true)).toList() shouldBe encode(legacy.toBackup()).toList()
+        }
+    }
+
+    @Test
+    fun `upstream repository metadata without modern marker is not mistaken for extension APKs`() {
+        val expected = Backup(backupMangaExtensionRepo = backup().backupMangaExtensionRepo)
+        val bytes = encode(expected)
+        val summary = BackupReader(Buffer().write(bytes), parser).use { it.readSummary() }
+        summary.isLegacy shouldBe false
+        encode(read(bytes, false)).toList() shouldBe bytes.toList()
+    }
+
+    @Test
     fun `modern marker overrides old anime source detection and ignores legacy titles`() {
         val modern = backup()
         val oldFields = parser.encodeToByteArray(

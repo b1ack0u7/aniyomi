@@ -33,56 +33,58 @@ class AnimeBackupCreator(
 
     private suspend fun backupAnimes(animes: List<Anime>, options: BackupOptions): List<BackupAnime> {
         val ids = animes.map { it.id }
-        val episodesById = if (options.chapters) {
-            handler.awaitList { episodesQueries.getEpisodesByAnimeIds(ids) }.groupBy { it.anime_id }
+        val episodesById = if (options.chapters || options.history) {
+            handler.awaitList { episodeQueries.getEpisodesByAnimeIds(ids) }.groupBy { it.anime_id }
         } else {
             emptyMap()
         }
         val categoriesById = if (options.categories) {
-            handler.awaitList { categoriesQueries.getCategoryOrdersByAnimeIds(ids) }.groupBy { it.anime_id }
+            handler.awaitList { categoryQueries.getCategoryOrdersByAnimeIds(ids) }.groupBy { it.anime_id }
         } else {
             emptyMap()
         }
         val tracksById = if (options.tracking) {
-            handler.awaitList { anime_syncQueries.getTracksByAnimeIds(ids) }.groupBy { it.anime_id }
+            handler.awaitList { anime_trackQueries.getTracksByAnimeIds(ids) }.groupBy { it.anime_id }
         } else {
             emptyMap()
         }
         val historyById = if (options.history) {
-            handler.awaitList { animehistoryQueries.getBackupHistoryByAnimeIds(ids) }.groupBy { it.anime_id }
+            handler.awaitList { anime_historyQueries.getBackupHistoryByAnimeIds(ids) }.groupBy { it.anime_id }
         } else {
             emptyMap()
         }
 
         return animes.map { anime ->
             anime.toBackupAnime().apply {
-                episodes = episodesById[anime.id].orEmpty().map {
+                val backupChildren = episodesById[anime.id].orEmpty().map {
                     backupEpisodeMapper(
-                        it._id,
+                        it.id,
                         it.anime_id,
-                        it.url,
-                        it.name,
-                        it.scanlator,
-                        it.seen,
-                        it.bookmark,
-                        it.last_second_seen,
-                        it.total_seconds,
-                        it.episode_number,
-                        it.source_order,
-                        it.date_fetch,
-                        it.date_upload,
+                        it.remote_url,
+                        it.remote_name,
+                        it.remote_scanlator,
+                        it.user_seen,
+                        it.user_bookmark,
+                        it.user_last_second_seen,
+                        it.remote_total_seconds,
+                        it.remote_episode_number,
+                        it.remote_source_order,
+                        it.state_date_fetch,
+                        it.remote_date_upload,
                         it.last_modified_at,
                         it.version,
                         it.is_syncing,
-                        it.summary,
-                        it.preview_url,
-                        it.fillermark,
+                        it.remote_summary,
+                        it.remote_preview,
+                        it.user_fillermark,
                     )
                 }
+                episodes = if (options.chapters) backupChildren else emptyList()
+                val childrenByUrl = backupChildren.associateBy { it.url }
                 categories = categoriesById[anime.id].orEmpty().map { it.sort }
                 tracking = tracksById[anime.id].orEmpty().map {
                     backupAnimeTrackMapper(
-                        it._id,
+                        it.id,
                         it.anime_id,
                         it.sync_id,
                         it.remote_id,
@@ -99,7 +101,11 @@ class AnimeBackupCreator(
                     )
                 }
                 history = historyById[anime.id].orEmpty().map {
-                    BackupAnimeHistory(it.url, it.last_seen?.time ?: 0L)
+                    BackupAnimeHistory(
+                        it.url,
+                        it.last_seen?.time ?: 0L,
+                        episode = childrenByUrl[it.url]?.historyMetadata(),
+                    )
                 }
             }
         }

@@ -35,18 +35,18 @@ class MangaBackupCreator(
 
     private suspend fun backupMangas(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
         val ids = mangas.map { it.id }
-        val chaptersById = if (options.chapters) {
-            handler.awaitList { chaptersQueries.getChaptersByMangaIds(ids) }.groupBy { it.manga_id }
+        val chaptersById = if (options.chapters || options.history) {
+            handler.awaitList { chapterQueries.getChaptersByMangaIds(ids) }.groupBy { it.manga_id }
         } else {
             emptyMap()
         }
         val categoriesById = if (options.categories) {
-            handler.awaitList { categoriesQueries.getCategoryOrdersByMangaIds(ids) }.groupBy { it.manga_id }
+            handler.awaitList { categoryQueries.getCategoryOrdersByMangaIds(ids) }.groupBy { it.manga_id }
         } else {
             emptyMap()
         }
         val tracksById = if (options.tracking) {
-            handler.awaitList { manga_syncQueries.getTracksByMangaIds(ids) }.groupBy { it.manga_id }
+            handler.awaitList { manga_trackQueries.getTracksByMangaIds(ids) }.groupBy { it.manga_id }
         } else {
             emptyMap()
         }
@@ -56,36 +56,38 @@ class MangaBackupCreator(
             emptyMap()
         }
         val excludedScanlatorsById = handler.awaitList {
-            excluded_scanlatorsQueries.getExcludedScanlatorsByMangaIds(ids)
+            excluded_scanlatorQueries.getExcludedScanlatorsByMangaIds(ids)
         }.groupBy { it.manga_id }
 
         return mangas.map { manga ->
             manga.toBackupManga().apply {
                 excludedScanlators = excludedScanlatorsById[manga.id].orEmpty().map { it.scanlator }
-                chapters = chaptersById[manga.id].orEmpty().map {
+                val backupChildren = chaptersById[manga.id].orEmpty().map {
                     backupChapterMapper(
-                        it._id,
+                        it.id,
                         it.manga_id,
-                        it.url,
-                        it.name,
-                        it.scanlator,
-                        it.read,
-                        it.bookmark,
-                        it.last_page_read,
-                        it.chapter_number,
-                        it.source_order,
-                        it.date_fetch,
-                        it.date_upload,
+                        it.remote_url,
+                        it.remote_name,
+                        it.remote_scanlator,
+                        it.user_read,
+                        it.user_bookmark,
+                        it.user_last_page_read,
+                        it.remote_chapter_number,
+                        it.remote_source_order,
+                        it.state_date_fetch,
+                        it.remote_date_upload,
                         it.last_modified_at,
                         it.version,
                         it.is_syncing,
-                        it.memo,
+                        it.remote_memo,
                     )
                 }
+                chapters = if (options.chapters) backupChildren else emptyList()
+                val childrenByUrl = backupChildren.associateBy { it.url }
                 categories = categoriesById[manga.id].orEmpty().map { it.sort }
                 tracking = tracksById[manga.id].orEmpty().map {
                     backupMangaTrackMapper(
-                        it._id,
+                        it.id,
                         it.manga_id,
                         it.sync_id,
                         it.remote_id,
@@ -102,7 +104,12 @@ class MangaBackupCreator(
                     )
                 }
                 history = historyById[manga.id].orEmpty().map {
-                    BackupHistory(it.url, it.last_read?.time ?: 0L, it.time_read)
+                    BackupHistory(
+                        it.url,
+                        it.last_read?.time ?: 0L,
+                        it.time_read,
+                        chapter = childrenByUrl[it.url]?.historyMetadata(),
+                    )
                 }
             }
         }

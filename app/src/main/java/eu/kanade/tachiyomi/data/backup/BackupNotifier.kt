@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup
 
+import android.app.Notification
 import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
@@ -86,13 +87,14 @@ class BackupNotifier(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun showRestoreProgress(
         content: String = "",
         progress: Int = 0,
         maxAmount: Int = 100,
         sync: Boolean = false,
-    ): NotificationCompat.Builder {
-        val builder = with(progressNotificationBuilder) {
+    ): Notification {
+        val notification = with(progressNotificationBuilder) {
             val contentTitle = if (sync) {
                 context.stringResource(MR.strings.syncing_library)
             } else {
@@ -116,11 +118,12 @@ class BackupNotifier(private val context: Context) {
                     Notifications.ID_RESTORE_PROGRESS,
                 ),
             )
+            build()
         }
 
-        builder.show(Notifications.ID_RESTORE_PROGRESS)
+        context.notify(Notifications.ID_RESTORE_PROGRESS, notification)
 
-        return builder
+        return notification
     }
 
     fun showRestoreError(error: String?) {

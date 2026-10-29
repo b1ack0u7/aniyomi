@@ -10,6 +10,7 @@ data class BackupHistory(
     @ProtoNumber(1) var url: String,
     @ProtoNumber(2) var lastRead: Long,
     @ProtoNumber(3) var readDuration: Long = 0,
+    @ProtoNumber(4) var chapter: BackupChapter? = null,
 ) {
     fun getHistoryImpl(): MangaHistory {
         return MangaHistory.create().copy(
