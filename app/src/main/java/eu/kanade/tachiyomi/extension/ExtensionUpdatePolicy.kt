@@ -19,6 +19,7 @@ internal object ExtensionUpdatePolicy {
         expectedVersionCode: Long,
         repositorySigningKey: String,
     ): Boolean = repositorySigningKey.isNotBlank() &&
-        actualPackageName == expectedPackageName && actualVersionCode == expectedVersionCode &&
+        actualPackageName == expectedPackageName &&
+        actualVersionCode == expectedVersionCode &&
         repositorySigningKey in actualSignatures
 }
